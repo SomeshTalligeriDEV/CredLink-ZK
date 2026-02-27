@@ -66,6 +66,19 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     mapping(address => UserProfile) private _profiles;
 
     // -----------------------------------------------------------------------
+    //  Identity Binding (Moca Wallet Integration)
+    // -----------------------------------------------------------------------
+
+    /// @notice Mapping from identity hash to bound wallet address.
+    mapping(bytes32 => address) public identityToWallet;
+
+    /// @notice Mapping from wallet address to bound identity hash.
+    mapping(address => bytes32) public walletToIdentity;
+
+    /// @notice Whether a wallet has a verified identity bound.
+    mapping(address => bool) public identityVerified;
+
+    // -----------------------------------------------------------------------
     //  Events
     // -----------------------------------------------------------------------
 
@@ -91,6 +104,11 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     /// @param user        The borrower address.
     /// @param repaidLoans The new repaid loan count.
     event RepaidLoanIncremented(address indexed user, uint256 repaidLoans);
+
+    /// @notice Emitted when an identity is bound to a wallet.
+    /// @param identityHash The keccak256 hash of the Moca identity ID.
+    /// @param wallet       The wallet address the identity is bound to.
+    event IdentityBound(bytes32 indexed identityHash, address indexed wallet);
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -121,6 +139,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     ) external onlyRole(VERIFIER_ROLE) whenNotPaused {
         require(user != address(0), "CreditScoreZK: zero address");
         require(newScore <= 1000, "CreditScoreZK: score exceeds 1000");
+        require(identityVerified[user], "CreditScoreZK: identity not verified via Moca");
 
         UserProfile storage profile = _profiles[user];
         profile.score = newScore;
@@ -303,6 +322,48 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      */
     function getScore(address user) external view returns (uint256) {
         return _profiles[user].score;
+    }
+
+    // -----------------------------------------------------------------------
+    //  External / Public — Identity Binding
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Binds a Moca identity hash to a wallet address.
+     * @dev Only callable by DEFAULT_ADMIN_ROLE. Each identity can only be
+     *      bound to one wallet, and each wallet can only have one identity.
+     * @param identityHash The keccak256 hash of the Moca identity ID.
+     * @param wallet       The wallet address to bind.
+     */
+    function bindIdentity(
+        bytes32 identityHash,
+        address wallet
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(
+            identityToWallet[identityHash] == address(0),
+            "CreditScoreZK: identity already bound to another wallet"
+        );
+        require(
+            walletToIdentity[wallet] == bytes32(0),
+            "CreditScoreZK: wallet already has identity"
+        );
+
+        identityToWallet[identityHash] = wallet;
+        walletToIdentity[wallet] = identityHash;
+        identityVerified[wallet] = true;
+
+        emit IdentityBound(identityHash, wallet);
+    }
+
+    /**
+     * @notice Checks whether a wallet has a verified Moca identity.
+     * @param wallet The wallet address to check.
+     * @return True if the wallet has a verified identity.
+     */
+    function isIdentityVerified(
+        address wallet
+    ) external view returns (bool) {
+        return identityVerified[wallet];
     }
 
     // -----------------------------------------------------------------------

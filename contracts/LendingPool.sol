@@ -138,7 +138,25 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
     /// @notice Mapping from borrower address to their list of loan IDs.
     mapping(address => uint256[]) private _borrowerLoans;
 
-    /// @notice Default loan duration (30 days).
+    // -----------------------------------------------------------------------
+    //  Anti-Abuse Protection
+    // -----------------------------------------------------------------------
+
+    /// @notice Timestamp of each borrower's last loan request.
+    mapping(address => uint256) public lastLoanTimestamp;
+
+    /// @notice Number of currently active (non-repaid, non-liquidated) loans per borrower.
+    mapping(address => uint256) public activeLoanCount;
+
+    /// @notice Minimum time between successive loans from the same borrower.
+    uint256 public constant LOAN_COOLDOWN = 7 days;
+
+    /// @notice Maximum number of concurrent active loans per borrower.
+    uint256 public constant MAX_ACTIVE_LOANS = 3;
+
+    // -----------------------------------------------------------------------
+    //  Constants
+    // -----------------------------------------------------------------------
     uint256 public constant LOAN_DURATION = 30 days;
 
     /// @notice Maximum pool utilization in basis points (80% = 8000).
@@ -243,6 +261,22 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
     // -----------------------------------------------------------------------
 
     /**
+     * @notice Returns the dynamic interest rate for a borrower based on their tier.
+     * @dev Platinum: 2%, Gold: 3%, Silver: 4%, Bronze: 5%.
+     * @param borrower The borrower address.
+     * @return The interest rate as a percentage (2-5).
+     */
+    function getInterestRate(
+        address borrower
+    ) public view returns (uint256) {
+        (uint8 tier, ) = creditScore.getUserTier(borrower);
+        if (tier == 3) return 2; // Platinum - 2%
+        if (tier == 2) return 3; // Gold - 3%
+        if (tier == 1) return 4; // Silver - 4%
+        return 5;                // Bronze - 5%
+    }
+
+    /**
      * @notice Requests a new loan from the pool.
      * @dev The caller must send exactly the required collateral as msg.value.
      *      The collateral requirement is determined by the user's credit tier
@@ -256,6 +290,16 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         uint256 amount
     ) external payable whenNotPaused nonReentrant {
         require(amount > 0, "LendingPool: loan amount must be > 0");
+        require(msg.sender != address(this), "LendingPool: no self-lending");
+        require(
+            block.timestamp >= lastLoanTimestamp[msg.sender] + LOAN_COOLDOWN
+                || lastLoanTimestamp[msg.sender] == 0,
+            "LendingPool: 7-day cooldown active"
+        );
+        require(
+            activeLoanCount[msg.sender] < MAX_ACTIVE_LOANS,
+            "LendingPool: max 3 active loans"
+        );
 
         // --- Collateral check ---
         uint256 requiredCollateral = creditScore.getCollateralRequired(
@@ -316,6 +360,10 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         // --- Update credit score system ---
         creditScore.incrementLoans(msg.sender);
 
+        // --- Anti-abuse tracking ---
+        lastLoanTimestamp[msg.sender] = block.timestamp;
+        activeLoanCount[msg.sender]++;
+
         emit LoanCreated(
             loanId,
             msg.sender,
@@ -346,11 +394,13 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         require(!loan.repaid, "LendingPool: loan already repaid");
         require(!loan.liquidated, "LendingPool: loan already liquidated");
 
-        uint256 repaymentAmount = (loan.amount * REPAYMENT_NUMERATOR) /
-            REPAYMENT_DENOMINATOR;
+        // --- Dynamic interest based on tier ---
+        uint256 rate = getInterestRate(loan.borrower);
+        uint256 interest = (loan.amount * rate) / 100;
+        uint256 repaymentAmount = loan.amount + interest;
         require(
             msg.value >= repaymentAmount,
-            "LendingPool: insufficient repayment (principal + 2% interest)"
+            "LendingPool: insufficient repayment (principal + interest)"
         );
 
         // --- Mark as repaid ---
@@ -361,6 +411,11 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
 
         // --- Release collateral back to borrower ---
         collateralManager.releaseCollateral(loanId, loan.borrower);
+
+        // --- Decrement active loan count ---
+        if (activeLoanCount[loan.borrower] > 0) {
+            activeLoanCount[loan.borrower]--;
+        }
 
         // --- Improve borrower credit score ---
         creditScore.adjustScore(loan.borrower, int256(50));
@@ -404,6 +459,11 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
 
         // --- Send collateral to the pool ---
         collateralManager.liquidateCollateral(loanId, address(this));
+
+        // --- Decrement active loan count ---
+        if (activeLoanCount[loan.borrower] > 0) {
+            activeLoanCount[loan.borrower]--;
+        }
 
         // --- Penalize borrower credit score ---
         creditScore.adjustScore(loan.borrower, -int256(100));

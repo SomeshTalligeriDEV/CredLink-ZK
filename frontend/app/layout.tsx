@@ -59,6 +59,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <Link href="/repay" className="text-gray-300 hover:text-gold transition-colors text-sm">
                         Repay
                       </Link>
+                      <Link href="/travel" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                        Travel Mode
+                      </Link>
                     </div>
                   </div>
                   <div className="flex items-center space-x-4">
@@ -79,14 +82,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Link href="/" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Dashboard</Link>
                   <Link href="/borrow" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Borrow</Link>
                   <Link href="/repay" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Repay</Link>
+                  <Link href="/travel" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Travel Mode</Link>
                 </div>
               )}
             </nav>
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
               {children}
             </main>
-            <footer className="border-t border-dark-border mt-16 py-8 text-center text-gray-500 text-sm">
-              CredLink ZK — Privacy-Preserving Credit on BNB Chain
+            <footer className="border-t border-dark-border mt-16 py-8 text-center">
+              <p className="text-xs text-gray-600 italic">
+                &quot;Built for everyone who moved abroad and lost their financial identity.
+                Your blockchain history is your credit.&quot;
+              </p>
+              <p className="text-xs text-[#F0B90B]/50 mt-1">
+                CredLink ZK — BNB Chain x YZI Labs Hackathon Bengaluru 2026
+              </p>
             </footer>
           </QueryClientProvider>
         </WagmiProvider>

@@ -35,6 +35,7 @@ app.use((req, res, next) => {
 // Mount routes
 app.use('/api/credit', creditRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/identity', require('./routes/identity'));
 
 // Health check
 app.get('/api/health', (req, res) => {
