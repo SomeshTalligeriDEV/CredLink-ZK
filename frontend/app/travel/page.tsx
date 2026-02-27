@@ -15,6 +15,9 @@ export default function TravelPage() {
   const [mocaId, setMocaId] = useState("");
   const [registering, setRegistering] = useState(false);
   const [activeTab, setActiveTab] = useState("passport");
+  const [originCountry, setOriginCountry] = useState("");
+  const [destCountry, setDestCountry] = useState("");
+  const [simResult, setSimResult] = useState<any>(null);
 
   // Generate QR code with passport data
   useEffect(() => {
@@ -121,8 +124,8 @@ export default function TravelPage() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6">
-          {(["passport", "verify", "connect"] as const).map((tab) => (
+        <div className="flex gap-2 mb-6 flex-wrap">
+          {(["passport", "verify", "connect", "migrate"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -136,7 +139,9 @@ export default function TravelPage() {
                 ? "My Passport"
                 : tab === "verify"
                 ? "Verify Passport"
-                : "Connect Moca"}
+                : tab === "connect"
+                ? "Connect Moca"
+                : "Migration Sim"}
             </button>
           ))}
         </div>
@@ -457,6 +462,135 @@ export default function TravelPage() {
                   <div className="text-sm text-gray-400">
                     Your credit reputation is now tied to your identity. It travels
                     with you worldwide.
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4 — MIGRATION SIMULATION (Upgrade 6) */}
+        {activeTab === "migrate" && (
+          <div className="bg-[#0D0D12] border border-[#1A1A25] rounded-2xl p-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-[#F0B90B]/10 rounded-xl flex items-center justify-center text-2xl">
+                &#127758;
+              </div>
+              <div>
+                <h3 className="font-bold text-xl">Migration Simulation</h3>
+                <p className="text-gray-400 text-sm">
+                  See how your credit passport benefits you when moving abroad
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div>
+                <label className="text-sm text-gray-400 mb-2 block">Origin Country</label>
+                <select
+                  value={originCountry}
+                  onChange={(e) => setOriginCountry(e.target.value)}
+                  className="w-full bg-[#1A1A25] border border-[#2A2A35] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#F0B90B]"
+                >
+                  <option value="">Select origin...</option>
+                  <option value="india">India</option>
+                  <option value="nigeria">Nigeria</option>
+                  <option value="philippines">Philippines</option>
+                  <option value="brazil">Brazil</option>
+                  <option value="indonesia">Indonesia</option>
+                  <option value="turkey">Turkey</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 mb-2 block">Destination Country</label>
+                <select
+                  value={destCountry}
+                  onChange={(e) => setDestCountry(e.target.value)}
+                  className="w-full bg-[#1A1A25] border border-[#2A2A35] rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-[#F0B90B]"
+                >
+                  <option value="">Select destination...</option>
+                  <option value="germany">Germany</option>
+                  <option value="usa">United States</option>
+                  <option value="uk">United Kingdom</option>
+                  <option value="canada">Canada</option>
+                  <option value="australia">Australia</option>
+                  <option value="singapore">Singapore</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                if (!originCountry || !destCountry) return;
+                const benefits = {
+                  rentalDepositReduction: creditData.tier >= 2 ? 40 : creditData.tier >= 1 ? 20 : 0,
+                  microloanApproval: creditData.score >= 500,
+                  creditTransferTime: creditData.zkVerified ? "Instant" : "24-48 hours",
+                  borrowingPower: creditData.tier === 3 ? "Full access" : creditData.tier === 2 ? "Standard access" : "Limited access",
+                  interestRate: creditData.tier === 3 ? "2%" : creditData.tier === 2 ? "3%" : creditData.tier === 1 ? "4%" : "5%",
+                };
+                setSimResult(benefits);
+              }}
+              disabled={!originCountry || !destCountry}
+              className="w-full bg-[#F0B90B] text-black font-bold py-3 rounded-xl hover:bg-yellow-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed mb-6"
+            >
+              Simulate Migration
+            </button>
+
+            {simResult && (
+              <div className="space-y-4">
+                <div className="bg-[#F0B90B]/5 border border-[#F0B90B]/20 rounded-xl p-4">
+                  <div className="text-sm font-bold text-[#F0B90B] mb-3">
+                    Migration Benefits: {originCountry.charAt(0).toUpperCase() + originCountry.slice(1)} &#8594; {destCountry.charAt(0).toUpperCase() + destCountry.slice(1)}
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center border-b border-[#1A1A25] pb-2">
+                      <span className="text-gray-400 text-sm">Rental Deposit Reduction</span>
+                      <span className={`font-bold text-sm ${simResult.rentalDepositReduction > 0 ? "text-green-400" : "text-gray-500"}`}>
+                        {simResult.rentalDepositReduction > 0 ? `${simResult.rentalDepositReduction}% OFF` : "Not eligible"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-[#1A1A25] pb-2">
+                      <span className="text-gray-400 text-sm">Microloan Pre-Approval</span>
+                      <span className={`font-bold text-sm ${simResult.microloanApproval ? "text-green-400" : "text-yellow-400"}`}>
+                        {simResult.microloanApproval ? "APPROVED" : "NEEDS HIGHER SCORE"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-[#1A1A25] pb-2">
+                      <span className="text-gray-400 text-sm">Credit Transfer Speed</span>
+                      <span className="font-bold text-sm text-[#00D2D3]">{simResult.creditTransferTime}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-[#1A1A25] pb-2">
+                      <span className="text-gray-400 text-sm">Borrowing Power</span>
+                      <span className="font-bold text-sm text-[#F0B90B]">{simResult.borrowingPower}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400 text-sm">Interest Rate</span>
+                      <span className="font-bold text-sm text-green-400">{simResult.interestRate}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Comparison: Without vs With CredLink */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-red-400/5 border border-red-400/20 rounded-xl p-4">
+                    <div className="text-red-400 text-xs font-bold mb-2">WITHOUT CREDLINK</div>
+                    <div className="space-y-2 text-sm">
+                      <div className="text-gray-400">&#10007; No credit history abroad</div>
+                      <div className="text-gray-400">&#10007; 3-12 month waiting period</div>
+                      <div className="text-gray-400">&#10007; Full deposit on rental</div>
+                      <div className="text-gray-400">&#10007; No borrowing access</div>
+                    </div>
+                  </div>
+                  <div className="bg-green-400/5 border border-green-400/20 rounded-xl p-4">
+                    <div className="text-green-400 text-xs font-bold mb-2">WITH CREDLINK ZK</div>
+                    <div className="space-y-2 text-sm">
+                      <div className="text-gray-300">&#10003; Portable on-chain credit</div>
+                      <div className="text-gray-300">&#10003; Instant verification</div>
+                      <div className="text-gray-300">&#10003; Reduced deposit (up to 40%)</div>
+                      <div className="text-gray-300">&#10003; Immediate borrowing</div>
+                    </div>
                   </div>
                 </div>
               </div>

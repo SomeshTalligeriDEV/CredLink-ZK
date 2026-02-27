@@ -86,6 +86,38 @@ interface ICollateralManager {
  *      - Successful repayment increases the borrower's credit score (+50).
  *      - Liquidation decreases the borrower's credit score (-100).
  *      - Collateral is held in the separate CollateralManager contract.
+ *
+ * ARCHITECTURE:
+ *      LendingPool is the core financial engine. It coordinates between:
+ *      - CreditScoreZK (reads tier/collateral, writes score adjustments)
+ *      - CollateralManager (delegates collateral escrow)
+ *      - Lenders (deposits, withdrawals, yield)
+ *      - Borrowers (loan requests, repayments)
+ *
+ * INVARIANTS:
+ *      - totalBorrowed <= 80% of (balance + totalBorrowed)
+ *      - Every loan has matching collateral in CollateralManager
+ *      - activeLoanCount[user] == count of non-repaid, non-liquidated loans
+ *      - A loan's state transitions: active -> repaid OR active -> liquidated
+ *
+ * ECONOMIC ASSUMPTIONS:
+ *      - Dynamic interest: Platinum 2%, Gold 3%, Silver 4%, Bronze 5%
+ *      - Dynamic APY for lenders: 4% (low util), 6% (medium), 8% (high)
+ *      - 7-day cooldown between loans prevents rapid cycling
+ *      - 1-hour minimum lock prevents flash loan exploits
+ *
+ * ATTACK RESISTANCE:
+ *      - ReentrancyGuard on all payable functions
+ *      - Same-block deposit+borrow prevention
+ *      - Anomaly scoring system with admin flagging
+ *      - Max 3 concurrent loans per borrower
+ *      - No self-lending (msg.sender != address(this))
+ *
+ * UPGRADE PATH:
+ *      - Connect to GovernanceStub for dynamic parameter control
+ *      - Add ERC20 token support for multi-asset lending
+ *      - Integrate Chainlink price feeds for collateral valuation
+ *      - Implement time-weighted APY distribution for lenders
  */
 contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
     // -----------------------------------------------------------------------
@@ -139,6 +171,19 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
     mapping(address => uint256[]) private _borrowerLoans;
 
     // -----------------------------------------------------------------------
+    //  Liquidity Provider Accounting (Upgrade 1)
+    // -----------------------------------------------------------------------
+
+    /// @notice Mapping from lender address to their total deposited amount.
+    mapping(address => uint256) public lenderDeposits;
+
+    /// @notice Total liquidity deposited by all lenders (tracked explicitly).
+    uint256 public totalLiquidity;
+
+    /// @notice Total interest earned by the pool (from repayments).
+    uint256 public totalInterestEarned;
+
+    // -----------------------------------------------------------------------
     //  Anti-Abuse Protection
     // -----------------------------------------------------------------------
 
@@ -153,6 +198,20 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
 
     /// @notice Maximum number of concurrent active loans per borrower.
     uint256 public constant MAX_ACTIVE_LOANS = 3;
+
+    // -----------------------------------------------------------------------
+    //  Advanced Anti-Abuse (Upgrade 3)
+    // -----------------------------------------------------------------------
+
+    /// @notice Block number of each address's last deposit (prevents same-block borrow).
+    mapping(address => uint256) public lastDepositBlock;
+
+    /// @notice Per-address anomaly score. Incremented on suspicious activity.
+    ///         If anomalyScore >= 3, the address is flagged.
+    mapping(address => uint256) public anomalyScore;
+
+    /// @notice Minimum time after loan creation before repayment is allowed.
+    uint256 public constant MIN_REPAY_DELAY = 1 hours;
 
     // -----------------------------------------------------------------------
     //  Constants
@@ -176,6 +235,26 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
     /// @param lender The depositor address.
     /// @param amount The amount deposited in wei.
     event Deposited(address indexed lender, uint256 amount);
+
+    /// @notice Emitted when a lender deposits liquidity (tracked version).
+    event LiquidityDeposited(
+        address indexed lender,
+        uint256 amount,
+        uint256 totalDeposited
+    );
+
+    /// @notice Emitted when a lender withdraws liquidity.
+    event LiquidityWithdrawn(
+        address indexed lender,
+        uint256 amount
+    );
+
+    /// @notice Emitted when an anomaly is detected for a borrower.
+    event AnomalyDetected(
+        address indexed user,
+        uint256 newAnomalyScore,
+        string reason
+    );
 
     /// @notice Emitted when a new loan is created.
     /// @param loanId          The unique loan ID.
@@ -256,6 +335,49 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         emit Deposited(msg.sender, msg.value);
     }
 
+    /**
+     * @notice Deposits liquidity into the pool with full accounting.
+     * @dev Tracks per-lender deposits and total liquidity. Also records the
+     *      deposit block to prevent same-block borrow exploits.
+     */
+    function depositLiquidity() external payable whenNotPaused nonReentrant {
+        require(msg.value > 0, "LendingPool: deposit must be > 0");
+
+        lenderDeposits[msg.sender] += msg.value;
+        totalLiquidity += msg.value;
+        lastDepositBlock[msg.sender] = block.number;
+
+        emit LiquidityDeposited(msg.sender, msg.value, lenderDeposits[msg.sender]);
+        emit Deposited(msg.sender, msg.value);
+    }
+
+    /**
+     * @notice Withdraws previously deposited liquidity from the pool.
+     * @dev The withdrawal must not reduce pool balance below outstanding loans.
+     *      Lenders can only withdraw up to their tracked deposit balance.
+     * @param amount The amount to withdraw in wei.
+     */
+    function withdrawLiquidity(uint256 amount) external whenNotPaused nonReentrant {
+        require(amount > 0, "LendingPool: amount must be > 0");
+        require(
+            lenderDeposits[msg.sender] >= amount,
+            "LendingPool: exceeds your deposited balance"
+        );
+        // Ensure pool retains enough to cover outstanding borrows.
+        require(
+            address(this).balance >= amount + totalBorrowed,
+            "LendingPool: insufficient pool reserves"
+        );
+
+        lenderDeposits[msg.sender] -= amount;
+        totalLiquidity -= amount;
+
+        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        require(success, "LendingPool: withdrawal transfer failed");
+
+        emit LiquidityWithdrawn(msg.sender, amount);
+    }
+
     // -----------------------------------------------------------------------
     //  External — Borrower Operations
     // -----------------------------------------------------------------------
@@ -299,6 +421,16 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         require(
             activeLoanCount[msg.sender] < MAX_ACTIVE_LOANS,
             "LendingPool: max 3 active loans"
+        );
+        // --- Upgrade 3: Same-block deposit+borrow prevention ---
+        require(
+            lastDepositBlock[msg.sender] < block.number,
+            "LendingPool: cannot borrow in same block as deposit"
+        );
+        // --- Upgrade 3: Anomaly flagging ---
+        require(
+            anomalyScore[msg.sender] < 3,
+            "LendingPool: address flagged for anomalous behavior"
         );
 
         // --- Collateral check ---
@@ -393,6 +525,11 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         );
         require(!loan.repaid, "LendingPool: loan already repaid");
         require(!loan.liquidated, "LendingPool: loan already liquidated");
+        // --- Upgrade 3: Minimum lock duration before repayment ---
+        require(
+            block.timestamp >= loan.startTime + MIN_REPAY_DELAY,
+            "LendingPool: must wait 1 hour before repayment"
+        );
 
         // --- Dynamic interest based on tier ---
         uint256 rate = getInterestRate(loan.borrower);
@@ -408,6 +545,9 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
 
         // --- Reduce outstanding borrows ---
         totalBorrowed -= loan.amount;
+
+        // --- Track interest earned (Upgrade 1) ---
+        totalInterestEarned += interest;
 
         // --- Release collateral back to borrower ---
         collateralManager.releaseCollateral(loanId, loan.borrower);
@@ -507,6 +647,109 @@ contract LendingPool is AccessControl, ReentrancyGuard, Pausable {
         uint256 totalAssets = address(this).balance + totalBorrowed;
         if (totalAssets == 0) return 0;
         return (totalBorrowed * 100) / totalAssets;
+    }
+
+    // -----------------------------------------------------------------------
+    //  External — Liquidity Provider Views (Upgrade 1)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Returns the dynamic APY for lenders based on pool utilization.
+     * @dev    Utilization < 40% → 4% APY
+     *         40-70%           → 6% APY
+     *         > 70%            → 8% APY
+     * @return apy The annual percentage yield (4, 6, or 8).
+     */
+    function getLenderAPY() public view returns (uint256 apy) {
+        uint256 totalAssets = address(this).balance + totalBorrowed;
+        if (totalAssets == 0) return 4;
+        uint256 utilization = (totalBorrowed * 100) / totalAssets;
+
+        if (utilization > 70) return 8;
+        if (utilization > 40) return 6;
+        return 4;
+    }
+
+    /**
+     * @notice Returns a lender's deposit info and their estimated yield.
+     * @param lender The lender address.
+     * @return deposited The total BNB deposited by this lender.
+     * @return currentAPY The current dynamic APY.
+     * @return estimatedYield The approximate annual yield on their deposit.
+     */
+    function getLenderInfo(
+        address lender
+    )
+        external
+        view
+        returns (
+            uint256 deposited,
+            uint256 currentAPY,
+            uint256 estimatedYield
+        )
+    {
+        deposited = lenderDeposits[lender];
+        currentAPY = getLenderAPY();
+        estimatedYield = (deposited * currentAPY) / 100;
+    }
+
+    /**
+     * @notice Returns a comprehensive pool snapshot for dashboards.
+     * @return poolBalance      BNB held by the contract.
+     * @return borrowed         Total outstanding loans.
+     * @return liquidity        Total tracked lender deposits.
+     * @return interestEarned   Total interest earned by the pool.
+     * @return utilizationPct   Pool utilization percentage (0-100).
+     * @return currentAPY       Current lender APY.
+     */
+    function getPoolSnapshot()
+        external
+        view
+        returns (
+            uint256 poolBalance,
+            uint256 borrowed,
+            uint256 liquidity,
+            uint256 interestEarned,
+            uint256 utilizationPct,
+            uint256 currentAPY
+        )
+    {
+        poolBalance = address(this).balance;
+        borrowed = totalBorrowed;
+        liquidity = totalLiquidity;
+        interestEarned = totalInterestEarned;
+
+        uint256 totalAssets = poolBalance + borrowed;
+        utilizationPct = totalAssets == 0 ? 0 : (borrowed * 100) / totalAssets;
+        currentAPY = getLenderAPY();
+    }
+
+    // -----------------------------------------------------------------------
+    //  External — Anomaly Management (Upgrade 3)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Allows admin to increment the anomaly score for a suspicious address.
+     * @dev If anomalyScore reaches 3, the address is blocked from borrowing.
+     * @param user   The address to flag.
+     * @param reason A human-readable reason for the flag.
+     */
+    function flagAnomaly(
+        address user,
+        string calldata reason
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        anomalyScore[user] += 1;
+        emit AnomalyDetected(user, anomalyScore[user], reason);
+    }
+
+    /**
+     * @notice Allows admin to reset an anomaly score (rehabilitation).
+     * @param user The address to clear.
+     */
+    function clearAnomaly(
+        address user
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        anomalyScore[user] = 0;
     }
 
     // -----------------------------------------------------------------------

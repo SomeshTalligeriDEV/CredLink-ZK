@@ -15,6 +15,30 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  *      or liquidate collateral. The contract is intentionally kept simple and
  *      gas-efficient -- it holds native BNB and tracks per-loan state in a
  *      lightweight struct.
+ *
+ * ARCHITECTURE:
+ *      CollateralManager is a single-responsibility escrow contract. It never
+ *      makes external calls to untrusted contracts. The only recipients of BNB
+ *      transfers are the borrower (on release) and the pool (on liquidation).
+ *
+ * INVARIANTS:
+ *      - sum(collaterals[i].amount for all locked i) <= address(this).balance
+ *      - A loan's collateral can only transition: locked -> released OR locked -> liquidated
+ *      - Only LENDING_POOL_ROLE can trigger state transitions
+ *
+ * ECONOMIC ASSUMPTIONS:
+ *      - Collateral is always >= 110% of loan amount (enforced by LendingPool)
+ *      - Undercollateralization threshold is 120% (provides 10-40% safety buffer)
+ *
+ * ATTACK RESISTANCE:
+ *      - ReentrancyGuard on all state-changing functions
+ *      - Checks-effects-interactions pattern (state updated before transfers)
+ *      - Only whitelisted roles can invoke operations
+ *
+ * UPGRADE PATH:
+ *      - Migrate to UUPS proxy pattern for upgradability
+ *      - Add support for ERC20 collateral tokens beyond native BNB
+ *      - Integrate price oracle for real-time collateral valuation
  */
 contract CollateralManager is AccessControl, ReentrancyGuard {
     // -----------------------------------------------------------------------

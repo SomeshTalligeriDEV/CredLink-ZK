@@ -23,6 +23,35 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *      Only the ZK verifier contract (VERIFIER_ROLE) may set absolute scores,
  *      and only the lending pool (LENDING_POOL_ROLE) may apply incremental
  *      adjustments or track loan activity.
+ *
+ * ARCHITECTURE:
+ *      CreditScoreZK is the central reputation registry. All other contracts
+ *      reference it for credit decisions. The score is never directly modifiable
+ *      by users — only by authorized contracts after verification.
+ *
+ * INVARIANTS:
+ *      - Score is always in [0, 1000]
+ *      - Tier is always in [0, 3] and derived deterministically from score
+ *      - CollateralRatio is always one of {110, 125, 135, 150}
+ *      - Each identity hash maps to exactly one wallet (bijective)
+ *      - Identity verification is required before ZK score updates
+ *
+ * ECONOMIC ASSUMPTIONS:
+ *      - Higher scores correlate with lower default risk
+ *      - +50 per successful repayment and -100 per liquidation creates
+ *        asymmetric incentives favoring good behavior
+ *      - Reputation decay prevents stale scores from persisting indefinitely
+ *
+ * ATTACK RESISTANCE:
+ *      - Sybil resistance via Moca identity binding (one identity = one wallet)
+ *      - Role-based access prevents unauthorized score manipulation
+ *      - Pausable for emergency intervention
+ *      - Score clamping prevents overflow/underflow
+ *
+ * UPGRADE PATH:
+ *      - Integrate GovernanceStub for dynamic tier thresholds
+ *      - Add cross-chain score syncing via CrossChainScoreOracle
+ *      - Move decay parameters to governance-controlled values
  */
 contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     // -----------------------------------------------------------------------
@@ -79,6 +108,25 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     mapping(address => bool) public identityVerified;
 
     // -----------------------------------------------------------------------
+    //  Reputation Decay (Upgrade 2)
+    // -----------------------------------------------------------------------
+
+    /// @notice Timestamp of each user's last score-changing activity.
+    mapping(address => uint256) public lastScoreActivity;
+
+    /// @notice Duration of moderate inactivity before minor decay.
+    uint256 public constant DECAY_THRESHOLD_MODERATE = 180 days;
+
+    /// @notice Duration of severe inactivity before major decay.
+    uint256 public constant DECAY_THRESHOLD_SEVERE = 365 days;
+
+    /// @notice Points deducted for moderate inactivity (180+ days).
+    int256 public constant DECAY_PENALTY_MODERATE = -20;
+
+    /// @notice Points deducted for severe inactivity (365+ days).
+    int256 public constant DECAY_PENALTY_SEVERE = -50;
+
+    // -----------------------------------------------------------------------
     //  Events
     // -----------------------------------------------------------------------
 
@@ -109,6 +157,9 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     /// @param identityHash The keccak256 hash of the Moca identity ID.
     /// @param wallet       The wallet address the identity is bound to.
     event IdentityBound(bytes32 indexed identityHash, address indexed wallet);
+
+    /// @notice Emitted when a reputation decay is applied.
+    event ReputationDecayed(address indexed user, int256 penalty, uint256 newScore, uint8 newTier);
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -145,6 +196,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         profile.score = newScore;
         _recalculateTier(profile);
         profile.lastUpdated = block.timestamp;
+        lastScoreActivity[user] = block.timestamp;
 
         emit ScoreUpdated(user, newScore, profile.tier);
     }
@@ -183,6 +235,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         profile.score = uint256(updated);
         _recalculateTier(profile);
         profile.lastUpdated = block.timestamp;
+        lastScoreActivity[user] = block.timestamp;
 
         emit ScoreAdjusted(user, delta, profile.score, profile.tier);
     }
@@ -322,6 +375,78 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      */
     function getScore(address user) external view returns (uint256) {
         return _profiles[user].score;
+    }
+
+    // -----------------------------------------------------------------------
+    //  External / Public — Reputation Decay (Upgrade 2)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Applies reputation decay to an inactive user.
+     * @dev Anyone can call this function. Decay is applied only if:
+     *      - The user has a non-zero score.
+     *      - The user has been inactive for at least 180 days.
+     *
+     *      180-364 days inactive → -20 points
+     *      365+ days inactive    → -50 points
+     *
+     *      The lastScoreActivity timestamp is reset after decay, preventing
+     *      repeated decay application in the same period.
+     *
+     * @param user The address whose score should be decayed.
+     */
+    function applyDecay(address user) external whenNotPaused {
+        require(user != address(0), "CreditScoreZK: zero address");
+
+        UserProfile storage profile = _profiles[user];
+        require(profile.score > 0, "CreditScoreZK: score already 0");
+
+        uint256 lastActivity = lastScoreActivity[user];
+        // If never set, use lastUpdated from the profile.
+        if (lastActivity == 0) {
+            lastActivity = profile.lastUpdated;
+        }
+        require(lastActivity > 0, "CreditScoreZK: no activity record");
+
+        uint256 elapsed = block.timestamp - lastActivity;
+        require(elapsed >= DECAY_THRESHOLD_MODERATE, "CreditScoreZK: not eligible for decay");
+
+        int256 penalty;
+        if (elapsed >= DECAY_THRESHOLD_SEVERE) {
+            penalty = DECAY_PENALTY_SEVERE;
+        } else {
+            penalty = DECAY_PENALTY_MODERATE;
+        }
+
+        int256 current = int256(profile.score);
+        int256 updated = current + penalty;
+        if (updated < 0) updated = 0;
+
+        profile.score = uint256(updated);
+        _recalculateTier(profile);
+        profile.lastUpdated = block.timestamp;
+        lastScoreActivity[user] = block.timestamp;
+
+        emit ReputationDecayed(user, penalty, profile.score, profile.tier);
+    }
+
+    /**
+     * @notice Returns the time since a user's last score activity.
+     * @param user The address to query.
+     * @return elapsed   Seconds since last activity.
+     * @return decayable Whether the user is eligible for decay.
+     */
+    function getDecayStatus(
+        address user
+    ) external view returns (uint256 elapsed, bool decayable) {
+        uint256 lastActivity = lastScoreActivity[user];
+        if (lastActivity == 0) {
+            lastActivity = _profiles[user].lastUpdated;
+        }
+        if (lastActivity == 0) return (0, false);
+
+        elapsed = block.timestamp - lastActivity;
+        decayable = elapsed >= DECAY_THRESHOLD_MODERATE && _profiles[user].score > 0;
     }
 
     // -----------------------------------------------------------------------

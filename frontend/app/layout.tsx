@@ -62,6 +62,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <Link href="/travel" className="text-gray-300 hover:text-gold transition-colors text-sm">
                         Travel Mode
                       </Link>
+                      <Link href="/lender" className="text-gray-300 hover:text-gold transition-colors text-sm">
+                        Lend
+                      </Link>
                     </div>
                   </div>
                   <div className="flex items-center space-x-4">
@@ -83,6 +86,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <Link href="/borrow" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Borrow</Link>
                   <Link href="/repay" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Repay</Link>
                   <Link href="/travel" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Travel Mode</Link>
+                  <Link href="/lender" className="block text-gray-300 hover:text-gold py-2" onClick={() => setMobileMenuOpen(false)}>Lend</Link>
                 </div>
               )}
             </nav>

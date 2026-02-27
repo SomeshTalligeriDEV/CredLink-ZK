@@ -42,6 +42,19 @@ contract ZKVerifier is AccessControl {
     bool public productionMode = false;
 
     // -----------------------------------------------------------------------
+    //  ZK Proof Gamification (Upgrade 5)
+    // -----------------------------------------------------------------------
+
+    /// @notice Number of successfully verified ZK proofs per user.
+    mapping(address => uint256) public zkProofCount;
+
+    /// @notice Badge tier thresholds: 1=Bronze, 3=Silver, 5=Gold, 10=Platinum.
+    uint256 public constant BADGE_BRONZE = 1;
+    uint256 public constant BADGE_SILVER = 3;
+    uint256 public constant BADGE_GOLD = 5;
+    uint256 public constant BADGE_PLATINUM = 10;
+
+    // -----------------------------------------------------------------------
     //  Events
     // -----------------------------------------------------------------------
 
@@ -54,6 +67,9 @@ contract ZKVerifier is AccessControl {
     /// @notice Emitted when production mode is toggled.
     /// @param enabled True if production mode is now enabled.
     event ProductionModeUpdated(bool enabled);
+
+    /// @notice Emitted when a user earns a new ZK badge level.
+    event ZKBadgeEarned(address indexed user, uint256 proofCount, string badgeLevel);
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -125,6 +141,20 @@ contract ZKVerifier is AccessControl {
         // --- Forward verified score to CreditScoreZK ---
         creditScoreZK.updateScoreFromZK(user, publicSignals[2]);
 
+        // --- Upgrade 5: ZK Proof Gamification ---
+        zkProofCount[user] += 1;
+        uint256 count = zkProofCount[user];
+        // Emit badge event at threshold crossings.
+        if (count == BADGE_PLATINUM) {
+            emit ZKBadgeEarned(user, count, "Platinum");
+        } else if (count == BADGE_GOLD) {
+            emit ZKBadgeEarned(user, count, "Gold");
+        } else if (count == BADGE_SILVER) {
+            emit ZKBadgeEarned(user, count, "Silver");
+        } else if (count == BADGE_BRONZE) {
+            emit ZKBadgeEarned(user, count, "Bronze");
+        }
+
         emit ProofVerified(user, publicSignals[2]);
     }
 
@@ -142,6 +172,33 @@ contract ZKVerifier is AccessControl {
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         productionMode = enabled;
         emit ProductionModeUpdated(enabled);
+    }
+
+    // -----------------------------------------------------------------------
+    //  External — ZK Badge Views (Upgrade 5)
+    // -----------------------------------------------------------------------
+
+    /**
+     * @notice Returns the ZK badge level for a user based on their proof count.
+     * @param user The address to query.
+     * @return badgeLevel The badge name ("None", "Bronze", "Silver", "Gold", "Platinum").
+     * @return proofCount The total number of verified proofs.
+     */
+    function getZKBadgeLevel(
+        address user
+    ) external view returns (string memory badgeLevel, uint256 proofCount) {
+        proofCount = zkProofCount[user];
+        if (proofCount >= BADGE_PLATINUM) {
+            badgeLevel = "Platinum";
+        } else if (proofCount >= BADGE_GOLD) {
+            badgeLevel = "Gold";
+        } else if (proofCount >= BADGE_SILVER) {
+            badgeLevel = "Silver";
+        } else if (proofCount >= BADGE_BRONZE) {
+            badgeLevel = "Bronze";
+        } else {
+            badgeLevel = "None";
+        }
     }
 
     // -----------------------------------------------------------------------
