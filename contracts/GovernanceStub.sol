@@ -6,34 +6,61 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 /**
  * @title GovernanceStub
  * @author CredLink ZK Team
- * @notice DAO governance preparation contract for CredLink ZK.
- *
- * @dev PURPOSE:
- *      This contract stores configurable protocol parameters that will be
- *      governed by a DAO in production. Currently, only the DEFAULT_ADMIN_ROLE
- *      (deployer) can update parameters. The migration path is:
- *
- *      1. Deploy a Governor contract (e.g., OpenZeppelin Governor + Timelock).
- *      2. Transfer DEFAULT_ADMIN_ROLE to the Timelock controller.
- *      3. All parameter changes then require a governance vote.
+ * @notice DAO governance preparation contract for CredLink ZK. Stores configurable
+ *         protocol parameters that will be governed by a DAO in production.
  *
  * INVARIANTS:
- *      - Interest rate bounds: minInterestRate <= maxInterestRate
- *      - Tier score thresholds: silverThreshold < goldThreshold < platinumThreshold <= 1000
- *      - Decay thresholds: moderateDecayDays < severeDecayDays
- *      - All penalty values are positive (stored as uint256)
+ *   INV-1: minInterestRate <= maxInterestRate, both in [1, 20].
+ *   INV-2: silverThreshold < goldThreshold < platinumThreshold <= 1000.
+ *   INV-3: moderateDecayDays < severeDecayDays.
+ *   INV-4: moderateDecayPenalty < severeDecayPenalty.
+ *   INV-5: maxUtilizationBps in [5000, 9500].
+ *   INV-6: All setters require DEFAULT_ADMIN_ROLE.
+ *
+ * ARCHITECTURE:
+ *   Centralized parameter store. Currently admin-controlled. Migration path:
+ *   1. Deploy a Governor contract (e.g., OpenZeppelin Governor + Timelock).
+ *   2. Transfer DEFAULT_ADMIN_ROLE to the Timelock controller.
+ *   3. All parameter changes then require a governance vote.
  *
  * ECONOMIC ASSUMPTIONS:
- *      - Interest rates in range [1, 20] percent
- *      - Decay encourages active participation but doesn't destroy value overnight
- *      - Tier thresholds control the risk appetite of the protocol
+ *   - Interest rates in [1, 20] percent to prevent extreme protocol behavior.
+ *   - Decay encourages active participation without destroying value overnight.
+ *   - Tier thresholds control the risk appetite of the protocol.
  *
  * ATTACK RESISTANCE:
- *      - All setters require DEFAULT_ADMIN_ROLE
- *      - Bounds checking prevents invalid configurations
- *      - Events emitted for off-chain monitoring
+ *   - All setters require DEFAULT_ADMIN_ROLE.
+ *   - Bounds checking prevents invalid configurations.
+ *   - Events emitted for off-chain monitoring.
+ *
+ * UPGRADE PATH:
+ *   - Transfer admin to OpenZeppelin Timelock for DAO governance.
+ *   - Add parameter change delay (timelock) for transparency.
+ *   - Add snapshot mechanism for historical parameter queries.
  */
 contract GovernanceStub is AccessControl {
+    // -----------------------------------------------------------------------
+    //  Custom Errors
+    // -----------------------------------------------------------------------
+
+    /// @dev Reverts when a rate value is outside the allowed range.
+    error InvalidRate(uint256 value, uint256 min, uint256 max);
+
+    /// @dev Reverts when min exceeds max in a range parameter.
+    error MinExceedsMax(uint256 min, uint256 max);
+
+    /// @dev Reverts when tier thresholds are not strictly ascending.
+    error InvalidTierOrder(uint256 silver, uint256 gold, uint256 platinum);
+
+    /// @dev Reverts when decay day ordering is violated.
+    error InvalidDecayOrder(uint256 moderate, uint256 severe);
+
+    /// @dev Reverts when a penalty value is outside the allowed range.
+    error InvalidPenalty(uint256 value, uint256 min, uint256 max);
+
+    /// @dev Reverts when a pool parameter is outside the allowed range.
+    error InvalidPoolParam(string param, uint256 value);
+
     // -----------------------------------------------------------------------
     //  Interest Rate Parameters
     // -----------------------------------------------------------------------
@@ -83,7 +110,7 @@ contract GovernanceStub is AccessControl {
     /// @notice Loan duration in seconds.
     uint256 public loanDuration = 30 days;
 
-    /// @notice Loan cooldown between successive borrows in seconds.
+    /// @notice Cooldown between successive borrows in seconds.
     uint256 public loanCooldown = 7 days;
 
     /// @notice Maximum concurrent active loans per borrower.
@@ -93,9 +120,16 @@ contract GovernanceStub is AccessControl {
     //  Events
     // -----------------------------------------------------------------------
 
+    /// @notice Emitted when interest rate bounds are updated.
     event InterestRateBoundsUpdated(uint256 min, uint256 max);
+
+    /// @notice Emitted when decay parameters are updated.
     event DecayParametersUpdated(uint256 moderateDays, uint256 severeDays, uint256 moderatePenalty, uint256 severePenalty);
+
+    /// @notice Emitted when tier thresholds are updated.
     event TierThresholdsUpdated(uint256 silver, uint256 gold, uint256 platinum);
+
+    /// @notice Emitted when pool parameters are updated.
     event PoolParametersUpdated(uint256 maxUtilBps, uint256 duration, uint256 cooldown, uint256 maxLoans);
 
     // -----------------------------------------------------------------------
@@ -112,16 +146,17 @@ contract GovernanceStub is AccessControl {
 
     /**
      * @notice Updates the interest rate bounds.
-     * @param _min Minimum interest rate percentage (1-20).
-     * @param _max Maximum interest rate percentage (1-20).
+     * @dev Enforces INV-1: both in [1, 20] and min <= max.
+     * @param _min Minimum interest rate percentage.
+     * @param _max Maximum interest rate percentage.
      */
     function setInterestRateBounds(
         uint256 _min,
         uint256 _max
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_min >= 1 && _min <= 20, "GovernanceStub: invalid min rate");
-        require(_max >= 1 && _max <= 20, "GovernanceStub: invalid max rate");
-        require(_min <= _max, "GovernanceStub: min > max");
+        if (_min < 1 || _min > 20) revert InvalidRate(_min, 1, 20);
+        if (_max < 1 || _max > 20) revert InvalidRate(_max, 1, 20);
+        if (_min > _max) revert MinExceedsMax(_min, _max);
 
         minInterestRate = _min;
         maxInterestRate = _max;
@@ -135,6 +170,7 @@ contract GovernanceStub is AccessControl {
 
     /**
      * @notice Updates the reputation decay parameters.
+     * @dev Enforces INV-3 and INV-4.
      * @param _moderateDays    Days before moderate decay.
      * @param _severeDays      Days before severe decay.
      * @param _moderatePenalty Points deducted for moderate inactivity.
@@ -146,10 +182,14 @@ contract GovernanceStub is AccessControl {
         uint256 _moderatePenalty,
         uint256 _severePenalty
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_moderateDays > 0, "GovernanceStub: moderate days must be > 0");
-        require(_severeDays > _moderateDays, "GovernanceStub: severe must be > moderate");
-        require(_moderatePenalty > 0 && _moderatePenalty <= 100, "GovernanceStub: invalid moderate penalty");
-        require(_severePenalty > _moderatePenalty && _severePenalty <= 200, "GovernanceStub: invalid severe penalty");
+        if (_moderateDays == 0) revert InvalidPoolParam("moderateDays", _moderateDays);
+        if (_severeDays <= _moderateDays) revert InvalidDecayOrder(_moderateDays, _severeDays);
+        if (_moderatePenalty == 0 || _moderatePenalty > 100) {
+            revert InvalidPenalty(_moderatePenalty, 1, 100);
+        }
+        if (_severePenalty <= _moderatePenalty || _severePenalty > 200) {
+            revert InvalidPenalty(_severePenalty, _moderatePenalty + 1, 200);
+        }
 
         moderateDecayDays = _moderateDays;
         severeDecayDays = _severeDays;
@@ -165,6 +205,7 @@ contract GovernanceStub is AccessControl {
 
     /**
      * @notice Updates the score thresholds for each tier.
+     * @dev Enforces INV-2: silver < gold < platinum <= 1000.
      * @param _silver   Minimum score for Silver.
      * @param _gold     Minimum score for Gold.
      * @param _platinum Minimum score for Platinum.
@@ -174,9 +215,9 @@ contract GovernanceStub is AccessControl {
         uint256 _gold,
         uint256 _platinum
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_silver < _gold, "GovernanceStub: silver >= gold");
-        require(_gold < _platinum, "GovernanceStub: gold >= platinum");
-        require(_platinum <= 1000, "GovernanceStub: platinum > 1000");
+        if (_silver >= _gold || _gold >= _platinum || _platinum > 1000) {
+            revert InvalidTierOrder(_silver, _gold, _platinum);
+        }
 
         silverThreshold = _silver;
         goldThreshold = _gold;
@@ -191,6 +232,7 @@ contract GovernanceStub is AccessControl {
 
     /**
      * @notice Updates the pool operational parameters.
+     * @dev Enforces INV-5 and reasonable bounds on all parameters.
      * @param _maxUtilBps Maximum utilization in basis points.
      * @param _duration   Loan duration in seconds.
      * @param _cooldown   Cooldown between loans in seconds.
@@ -202,10 +244,18 @@ contract GovernanceStub is AccessControl {
         uint256 _cooldown,
         uint256 _maxLoans
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_maxUtilBps >= 5000 && _maxUtilBps <= 9500, "GovernanceStub: invalid utilization");
-        require(_duration >= 1 days && _duration <= 365 days, "GovernanceStub: invalid duration");
-        require(_cooldown >= 1 hours && _cooldown <= 30 days, "GovernanceStub: invalid cooldown");
-        require(_maxLoans >= 1 && _maxLoans <= 10, "GovernanceStub: invalid max loans");
+        if (_maxUtilBps < 5000 || _maxUtilBps > 9500) {
+            revert InvalidPoolParam("maxUtilBps", _maxUtilBps);
+        }
+        if (_duration < 1 days || _duration > 365 days) {
+            revert InvalidPoolParam("duration", _duration);
+        }
+        if (_cooldown < 1 hours || _cooldown > 30 days) {
+            revert InvalidPoolParam("cooldown", _cooldown);
+        }
+        if (_maxLoans < 1 || _maxLoans > 10) {
+            revert InvalidPoolParam("maxLoans", _maxLoans);
+        }
 
         maxUtilizationBps = _maxUtilBps;
         loanDuration = _duration;
@@ -221,6 +271,16 @@ contract GovernanceStub is AccessControl {
 
     /**
      * @notice Returns all governance parameters in a single call.
+     * @return _minInterestRate  Minimum interest rate.
+     * @return _maxInterestRate  Maximum interest rate.
+     * @return _moderateDecayDays Days before moderate decay.
+     * @return _severeDecayDays   Days before severe decay.
+     * @return _silverThreshold   Silver tier threshold.
+     * @return _goldThreshold     Gold tier threshold.
+     * @return _platinumThreshold Platinum tier threshold.
+     * @return _maxUtilizationBps Max utilization in basis points.
+     * @return _loanDuration      Loan duration in seconds.
+     * @return _maxActiveLoans    Max concurrent active loans.
      */
     function getConfigSnapshot()
         external

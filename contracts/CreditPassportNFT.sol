@@ -9,14 +9,50 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 /**
  * @title CreditPassportNFT
  * @author CredLink ZK Team
- * @notice Soulbound (non-transferable) NFT representing a user's credit passport.
- *         Each wallet can mint exactly one passport. The passport stores the user's
- *         credit score, tier, verification status, and country. It can be updated
- *         as the user's credit evolves, but can never be transferred.
+ * @notice Soulbound (non-transferable) ERC721 representing a user's credit passport.
+ *         Each wallet can mint exactly one passport. The passport stores credit score,
+ *         tier, verification status, and country. Updatable but never transferable.
+ *
+ * INVARIANTS:
+ *   INV-1: Each wallet mints at most one passport (hasMinted is monotonic true).
+ *   INV-2: Tokens are never transferable (soulbound).
+ *   INV-3: Only MINTER_ROLE can mint and update passports.
+ *   INV-4: tokenURI always returns valid Base64-encoded JSON.
+ *
+ * ARCHITECTURE:
+ *   Identity-linked NFT that serves as an on-chain verifiable credential.
+ *   Integrates with CreditScoreZK for score data and ZKVerifier for
+ *   verification status.
+ *
+ * ATTACK RESISTANCE:
+ *   - transferFrom, safeTransferFrom, approve, setApprovalForAll all revert.
+ *   - Only MINTER_ROLE can create/update passports.
+ *   - One passport per wallet enforced by hasMinted mapping.
+ *
+ * UPGRADE PATH:
+ *   - Add ERC-5192 (Minimal Soulbound NFTs) interface support.
+ *   - Add batch update capability for protocol-wide score recalculations.
+ *   - Integrate on-chain SVG generation for passport images.
  */
 contract CreditPassportNFT is ERC721, AccessControl {
     using Strings for uint256;
     using Strings for uint8;
+
+    // -----------------------------------------------------------------------
+    //  Custom Errors
+    // -----------------------------------------------------------------------
+
+    /// @dev Reverts when a user tries to mint a second passport.
+    error AlreadyHasPassport(address user);
+
+    /// @dev Reverts when trying to update a non-existent passport.
+    error NoPassportToUpdate(address user);
+
+    /// @dev Reverts when querying a passport that doesn't exist.
+    error NoPassportFound(address user);
+
+    /// @dev Reverts on any transfer attempt (soulbound).
+    error SoulboundNonTransferable();
 
     // -----------------------------------------------------------------------
     //  Roles
@@ -33,7 +69,7 @@ contract CreditPassportNFT is ERC721, AccessControl {
      * @notice Data stored in each credit passport NFT.
      * @param score        Credit score (0-1000).
      * @param tier         Credit tier (0-3).
-     * @param lastUpdated  Timestamp of the last update.
+     * @param lastUpdated  Timestamp of last update.
      * @param zkVerified   Whether the user has a verified ZK proof.
      * @param mocaVerified Whether the user has a verified Moca identity.
      * @param country      Country where the passport was issued.
@@ -68,20 +104,10 @@ contract CreditPassportNFT is ERC721, AccessControl {
     // -----------------------------------------------------------------------
 
     /// @notice Emitted when a new credit passport is minted.
-    event PassportMinted(
-        address indexed user,
-        uint256 indexed tokenId,
-        uint256 score,
-        uint8 tier
-    );
+    event PassportMinted(address indexed user, uint256 indexed tokenId, uint256 score, uint8 tier);
 
     /// @notice Emitted when a passport's data is updated.
-    event PassportUpdated(
-        address indexed user,
-        uint256 indexed tokenId,
-        uint256 score,
-        uint8 tier
-    );
+    event PassportUpdated(address indexed user, uint256 indexed tokenId, uint256 score, uint8 tier);
 
     // -----------------------------------------------------------------------
     //  Constructor
@@ -99,6 +125,12 @@ contract CreditPassportNFT is ERC721, AccessControl {
     /**
      * @notice Mints a new soulbound credit passport for a user.
      * @dev Only callable by MINTER_ROLE. Each user can only have one passport.
+     * @param user         The address to mint the passport for.
+     * @param score        The initial credit score.
+     * @param tier         The initial credit tier.
+     * @param zkVerified   Whether the user has ZK verification.
+     * @param mocaVerified Whether the user has Moca identity verification.
+     * @param country      The passport country.
      */
     function mintPassport(
         address user,
@@ -108,9 +140,9 @@ contract CreditPassportNFT is ERC721, AccessControl {
         bool mocaVerified,
         string memory country
     ) external onlyRole(MINTER_ROLE) {
-        require(!hasMinted[user], "CreditPassportNFT: already has passport");
+        if (hasMinted[user]) revert AlreadyHasPassport(user);
 
-        _tokenCounter++;
+        unchecked { _tokenCounter++; }
         uint256 tokenId = _tokenCounter;
 
         _safeMint(user, tokenId);
@@ -133,13 +165,16 @@ contract CreditPassportNFT is ERC721, AccessControl {
     /**
      * @notice Updates the score and tier on an existing passport.
      * @dev Only callable by MINTER_ROLE. The user must already have a passport.
+     * @param user  The address whose passport to update.
+     * @param score The new credit score.
+     * @param tier  The new credit tier.
      */
     function updatePassport(
         address user,
         uint256 score,
         uint8 tier
     ) external onlyRole(MINTER_ROLE) {
-        require(hasMinted[user], "CreditPassportNFT: no passport to update");
+        if (!hasMinted[user]) revert NoPassportToUpdate(user);
 
         uint256 tokenId = userToTokenId[user];
         PassportData storage data = passportData[tokenId];
@@ -152,11 +187,13 @@ contract CreditPassportNFT is ERC721, AccessControl {
 
     /**
      * @notice Returns the passport data and token ID for a user.
+     * @param user The address to query.
+     * @return The PassportData struct and token ID.
      */
     function getPassport(
         address user
     ) external view returns (PassportData memory, uint256 tokenId) {
-        require(hasMinted[user], "CreditPassportNFT: no passport found");
+        if (!hasMinted[user]) revert NoPassportFound(user);
         tokenId = userToTokenId[user];
         return (passportData[tokenId], tokenId);
     }
@@ -165,38 +202,37 @@ contract CreditPassportNFT is ERC721, AccessControl {
     //  Soulbound — Disable Transfers
     // -----------------------------------------------------------------------
 
-    function transferFrom(
-        address,
-        address,
-        uint256
-    ) public pure override {
-        revert("Soulbound: non-transferable");
+    /// @notice Reverts — soulbound tokens cannot be transferred.
+    function transferFrom(address, address, uint256) public pure override {
+        revert SoulboundNonTransferable();
     }
 
-    function safeTransferFrom(
-        address,
-        address,
-        uint256,
-        bytes memory
-    ) public pure override {
-        revert("Soulbound: non-transferable");
+    /// @notice Reverts — soulbound tokens cannot be transferred.
+    function safeTransferFrom(address, address, uint256, bytes memory) public pure override {
+        revert SoulboundNonTransferable();
     }
 
+    /// @notice Reverts — soulbound tokens cannot be approved.
     function approve(address, uint256) public pure override {
-        revert("Soulbound: non-transferable");
+        revert SoulboundNonTransferable();
     }
 
+    /// @notice Reverts — soulbound tokens cannot set operator approval.
     function setApprovalForAll(address, bool) public pure override {
-        revert("Soulbound: non-transferable");
+        revert SoulboundNonTransferable();
     }
 
     // -----------------------------------------------------------------------
     //  Token URI — On-chain Metadata
     // -----------------------------------------------------------------------
 
-    function tokenURI(
-        uint256 tokenId
-    ) public view override returns (string memory) {
+    /**
+     * @notice Returns the on-chain JSON metadata for a passport token.
+     * @dev Generates Base64-encoded JSON with score, tier, and verification attributes.
+     * @param tokenId The token ID to query.
+     * @return The data URI containing Base64-encoded JSON metadata.
+     */
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
 
         PassportData storage data = passportData[tokenId];
@@ -207,7 +243,7 @@ contract CreditPassportNFT is ERC721, AccessControl {
         else if (data.tier == 1) tierName = "Silver";
         else tierName = "Bronze";
 
-        // Split into two parts to avoid stack-too-deep
+        // Split into two parts to avoid stack-too-deep.
         string memory part1 = string(
             abi.encodePacked(
                 '{"name":"CredLink ZK Credit Passport #',
@@ -247,6 +283,7 @@ contract CreditPassportNFT is ERC721, AccessControl {
     //  Required Overrides
     // -----------------------------------------------------------------------
 
+    /// @inheritdoc ERC721
     function supportsInterface(
         bytes4 interfaceId
     ) public view override(ERC721, AccessControl) returns (bool) {

@@ -7,40 +7,55 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 /**
  * @title CollateralManager
  * @author CredLink ZK Team
- * @notice Manages collateral for the CredLink ZK lending pool. Collateral is
+ * @notice Manages BNB collateral for the CredLink ZK lending pool. Collateral is
  *         locked when a loan is originated, released back to the borrower on
  *         successful repayment, or liquidated to the pool on default.
  *
- * @dev Only the LendingPool contract (LENDING_POOL_ROLE) may lock, release,
- *      or liquidate collateral. The contract is intentionally kept simple and
- *      gas-efficient -- it holds native BNB and tracks per-loan state in a
- *      lightweight struct.
+ * INVARIANTS:
+ *   INV-1: sum(collaterals[i].amount for all locked i) <= address(this).balance.
+ *   INV-2: A loan's collateral can only transition: locked -> released OR locked -> liquidated.
+ *   INV-3: Only LENDING_POOL_ROLE can trigger state transitions.
+ *   INV-4: Collateral amount is zeroed before BNB transfer (CEI pattern).
  *
  * ARCHITECTURE:
- *      CollateralManager is a single-responsibility escrow contract. It never
- *      makes external calls to untrusted contracts. The only recipients of BNB
- *      transfers are the borrower (on release) and the pool (on liquidation).
- *
- * INVARIANTS:
- *      - sum(collaterals[i].amount for all locked i) <= address(this).balance
- *      - A loan's collateral can only transition: locked -> released OR locked -> liquidated
- *      - Only LENDING_POOL_ROLE can trigger state transitions
+ *   Single-responsibility escrow contract. Never makes external calls to
+ *   untrusted contracts. Only recipients of BNB transfers are the borrower
+ *   (on release) and the pool (on liquidation).
  *
  * ECONOMIC ASSUMPTIONS:
- *      - Collateral is always >= 110% of loan amount (enforced by LendingPool)
- *      - Undercollateralization threshold is 120% (provides 10-40% safety buffer)
+ *   - Collateral is always >= 110% of loan amount (enforced by LendingPool).
+ *   - Undercollateralization threshold is 120% (provides 10-40% safety buffer).
  *
  * ATTACK RESISTANCE:
- *      - ReentrancyGuard on all state-changing functions
- *      - Checks-effects-interactions pattern (state updated before transfers)
- *      - Only whitelisted roles can invoke operations
+ *   - ReentrancyGuard on all state-changing functions.
+ *   - Checks-effects-interactions pattern (state zeroed before transfers).
+ *   - Only whitelisted roles can invoke operations.
  *
  * UPGRADE PATH:
- *      - Migrate to UUPS proxy pattern for upgradability
- *      - Add support for ERC20 collateral tokens beyond native BNB
- *      - Integrate price oracle for real-time collateral valuation
+ *   - Migrate to UUPS proxy pattern for upgradability.
+ *   - Add support for ERC20 collateral tokens beyond native BNB.
+ *   - Integrate price oracle for real-time collateral valuation.
  */
 contract CollateralManager is AccessControl, ReentrancyGuard {
+    // -----------------------------------------------------------------------
+    //  Custom Errors
+    // -----------------------------------------------------------------------
+
+    /// @dev Reverts when a zero address is provided.
+    error ZeroAddress();
+
+    /// @dev Reverts when collateral amount is zero.
+    error CollateralMustBePositive();
+
+    /// @dev Reverts when collateral is already locked for a loan.
+    error CollateralAlreadyLocked(uint256 loanId);
+
+    /// @dev Reverts when collateral is not locked (cannot release/liquidate).
+    error CollateralNotLocked(uint256 loanId);
+
+    /// @dev Reverts when BNB transfer fails.
+    error TransferFailed(address to, uint256 amount);
+
     // -----------------------------------------------------------------------
     //  Roles
     // -----------------------------------------------------------------------
@@ -81,39 +96,25 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
     /// @param loanId   The loan ID.
     /// @param borrower The borrower who posted the collateral.
     /// @param amount   The collateral amount in wei.
-    event CollateralLocked(
-        uint256 indexed loanId,
-        address indexed borrower,
-        uint256 amount
-    );
+    event CollateralLocked(uint256 indexed loanId, address indexed borrower, uint256 amount);
 
     /// @notice Emitted when collateral is released back to the borrower.
     /// @param loanId The loan ID.
     /// @param to     The address receiving the released collateral.
     /// @param amount The collateral amount in wei.
-    event CollateralReleased(
-        uint256 indexed loanId,
-        address indexed to,
-        uint256 amount
-    );
+    event CollateralReleased(uint256 indexed loanId, address indexed to, uint256 amount);
 
     /// @notice Emitted when collateral is liquidated and sent to the pool.
     /// @param loanId The loan ID.
     /// @param pool   The pool address receiving the liquidated collateral.
     /// @param amount The collateral amount in wei.
-    event CollateralLiquidated(
-        uint256 indexed loanId,
-        address indexed pool,
-        uint256 amount
-    );
+    event CollateralLiquidated(uint256 indexed loanId, address indexed pool, uint256 amount);
 
     // -----------------------------------------------------------------------
     //  Constructor
     // -----------------------------------------------------------------------
 
-    /**
-     * @notice Deploys the CollateralManager and grants admin role to the deployer.
-     */
+    /// @notice Deploys the CollateralManager and grants admin role to the deployer.
     constructor() {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
     }
@@ -124,24 +125,18 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
 
     /**
      * @notice Locks collateral for a new loan.
-     * @dev Only callable by the LendingPool (LENDING_POOL_ROLE). The collateral
+     * @dev Only callable by the LendingPool (LENDING_POOL_ROLE). Collateral
      *      amount is taken from msg.value.
      * @param loanId   The unique loan ID.
-     * @param borrower The borrower who is posting the collateral.
+     * @param borrower The borrower posting the collateral.
      */
     function lockCollateral(
         uint256 loanId,
         address borrower
     ) external payable onlyRole(LENDING_POOL_ROLE) nonReentrant {
-        require(msg.value > 0, "CollateralManager: collateral must be > 0");
-        require(
-            borrower != address(0),
-            "CollateralManager: borrower is zero address"
-        );
-        require(
-            !collaterals[loanId].locked,
-            "CollateralManager: collateral already locked for this loan"
-        );
+        if (msg.value == 0) revert CollateralMustBePositive();
+        if (borrower == address(0)) revert ZeroAddress();
+        if (collaterals[loanId].locked) revert CollateralAlreadyLocked(loanId);
 
         collaterals[loanId] = CollateralInfo({
             amount: msg.value,
@@ -154,8 +149,9 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
     }
 
     /**
-     * @notice Releases collateral back to the specified address (typically the borrower).
+     * @notice Releases collateral back to the specified address.
      * @dev Only callable by the LendingPool (LENDING_POOL_ROLE).
+     *      CEI pattern: state zeroed before transfer.
      * @param loanId The loan ID whose collateral should be released.
      * @param to     The address to send the collateral to.
      */
@@ -164,15 +160,17 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
         address to
     ) external onlyRole(LENDING_POOL_ROLE) nonReentrant {
         CollateralInfo storage info = collaterals[loanId];
-        require(info.locked, "CollateralManager: collateral not locked");
-        require(to != address(0), "CollateralManager: recipient is zero address");
+        if (!info.locked) revert CollateralNotLocked(loanId);
+        if (to == address(0)) revert ZeroAddress();
 
         uint256 amount = info.amount;
+
+        // Effects before interactions (CEI) — enforces INV-4.
         info.locked = false;
         info.amount = 0;
 
         (bool success, ) = payable(to).call{value: amount}("");
-        require(success, "CollateralManager: BNB transfer failed");
+        if (!success) revert TransferFailed(to, amount);
 
         emit CollateralReleased(loanId, to, amount);
     }
@@ -180,23 +178,26 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
     /**
      * @notice Liquidates collateral and sends it to the pool address.
      * @dev Only callable by the LendingPool (LENDING_POOL_ROLE).
+     *      CEI pattern: state zeroed before transfer.
      * @param loanId The loan ID whose collateral should be liquidated.
-     * @param pool   The address of the lending pool to receive the collateral.
+     * @param pool   The address of the lending pool.
      */
     function liquidateCollateral(
         uint256 loanId,
         address pool
     ) external onlyRole(LENDING_POOL_ROLE) nonReentrant {
         CollateralInfo storage info = collaterals[loanId];
-        require(info.locked, "CollateralManager: collateral not locked");
-        require(pool != address(0), "CollateralManager: pool is zero address");
+        if (!info.locked) revert CollateralNotLocked(loanId);
+        if (pool == address(0)) revert ZeroAddress();
 
         uint256 amount = info.amount;
+
+        // Effects before interactions (CEI) — enforces INV-4.
         info.locked = false;
         info.amount = 0;
 
         (bool success, ) = payable(pool).call{value: amount}("");
-        require(success, "CollateralManager: BNB transfer failed");
+        if (!success) revert TransferFailed(pool, amount);
 
         emit CollateralLiquidated(loanId, pool, amount);
     }
@@ -210,15 +211,12 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
      * @param loanId The loan ID to query.
      * @return The collateral amount in wei.
      */
-    function getCollateralValue(
-        uint256 loanId
-    ) external view returns (uint256) {
+    function getCollateralValue(uint256 loanId) external view returns (uint256) {
         return collaterals[loanId].amount;
     }
 
     /**
-     * @notice Checks whether a loan's collateral has fallen below the safety
-     *         threshold of 120% of the loan amount.
+     * @notice Checks whether a loan's collateral has fallen below 120% of loan amount.
      * @param loanId     The loan ID to check.
      * @param loanAmount The outstanding loan principal in wei.
      * @return True if the collateral is below 120% of the loan amount.
@@ -227,8 +225,6 @@ contract CollateralManager is AccessControl, ReentrancyGuard {
         uint256 loanId,
         uint256 loanAmount
     ) external view returns (bool) {
-        uint256 collateralValue = collaterals[loanId].amount;
-        // Undercollateralized when collateral < 120% of loan amount.
-        return collateralValue < (loanAmount * 120) / 100;
+        return collaterals[loanId].amount < (loanAmount * 120) / 100;
     }
 }

@@ -14,46 +14,71 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  *      a tier (0-3), and a corresponding collateral ratio that determines how
  *      much collateral the user must post when borrowing from the lending pool.
  *
- *      Tier thresholds:
- *        - Tier 0: score < 200   -> collateral ratio 150%
- *        - Tier 1: 200 <= score < 500 -> collateral ratio 135%
- *        - Tier 2: 500 <= score < 750 -> collateral ratio 125%
- *        - Tier 3: score >= 750  -> collateral ratio 110%
- *
- *      Only the ZK verifier contract (VERIFIER_ROLE) may set absolute scores,
- *      and only the lending pool (LENDING_POOL_ROLE) may apply incremental
- *      adjustments or track loan activity.
+ * INVARIANTS:
+ *   INV-1: 0 <= score <= 1000 for every user at all times.
+ *   INV-2: tier is deterministically derived from score:
+ *            score < 200  => tier 0, ratio 150
+ *            200 <= score < 500 => tier 1, ratio 135
+ *            500 <= score < 750 => tier 2, ratio 125
+ *            score >= 750 => tier 3, ratio 110
+ *   INV-3: collateralRatio in {110, 125, 135, 150}.
+ *   INV-4: identityToWallet and walletToIdentity form a bijection —
+ *          each identity hash maps to exactly one wallet and vice versa.
+ *   INV-5: identityVerified[w] == true iff walletToIdentity[w] != bytes32(0).
+ *   INV-6: lastScoreActivity[user] is set on every score mutation.
+ *   INV-7: Decay can only reduce a score, never increase it.
  *
  * ARCHITECTURE:
- *      CreditScoreZK is the central reputation registry. All other contracts
- *      reference it for credit decisions. The score is never directly modifiable
- *      by users — only by authorized contracts after verification.
- *
- * INVARIANTS:
- *      - Score is always in [0, 1000]
- *      - Tier is always in [0, 3] and derived deterministically from score
- *      - CollateralRatio is always one of {110, 125, 135, 150}
- *      - Each identity hash maps to exactly one wallet (bijective)
- *      - Identity verification is required before ZK score updates
+ *   Central reputation registry. All other contracts reference it for credit
+ *   decisions. The score is never directly modifiable by users — only by
+ *   authorized contracts after verification.
  *
  * ECONOMIC ASSUMPTIONS:
- *      - Higher scores correlate with lower default risk
- *      - +50 per successful repayment and -100 per liquidation creates
- *        asymmetric incentives favoring good behavior
- *      - Reputation decay prevents stale scores from persisting indefinitely
+ *   - Higher scores correlate with lower default risk.
+ *   - +50 per successful repayment and -100 per liquidation creates
+ *     asymmetric incentives favoring good behavior.
+ *   - Reputation decay prevents stale scores from persisting indefinitely.
  *
  * ATTACK RESISTANCE:
- *      - Sybil resistance via Moca identity binding (one identity = one wallet)
- *      - Role-based access prevents unauthorized score manipulation
- *      - Pausable for emergency intervention
- *      - Score clamping prevents overflow/underflow
+ *   - Sybil resistance via Moca identity binding (1 identity = 1 wallet).
+ *   - Role-based access prevents unauthorized score manipulation.
+ *   - Pausable for emergency intervention.
+ *   - Score clamping prevents overflow/underflow.
  *
  * UPGRADE PATH:
- *      - Integrate GovernanceStub for dynamic tier thresholds
- *      - Add cross-chain score syncing via CrossChainScoreOracle
- *      - Move decay parameters to governance-controlled values
+ *   - Integrate GovernanceStub for dynamic tier thresholds.
+ *   - Add cross-chain score syncing via CrossChainScoreOracle.
+ *   - Move decay parameters to governance-controlled values.
  */
 contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
+    // -----------------------------------------------------------------------
+    //  Custom Errors
+    // -----------------------------------------------------------------------
+
+    /// @dev Reverts when a zero address is passed where a valid address is required.
+    error ZeroAddress();
+
+    /// @dev Reverts when a score exceeds the maximum of 1000.
+    error ScoreExceedsMaximum(uint256 provided);
+
+    /// @dev Reverts when an operation requires a verified Moca identity.
+    error IdentityNotVerified(address wallet);
+
+    /// @dev Reverts when attempting to bind an identity that is already bound.
+    error IdentityAlreadyBound(bytes32 identityHash);
+
+    /// @dev Reverts when a wallet already has a bound identity.
+    error WalletAlreadyBound(address wallet);
+
+    /// @dev Reverts when decay is requested but the user's score is already zero.
+    error ScoreAlreadyZero(address user);
+
+    /// @dev Reverts when there is no activity record to compute decay from.
+    error NoActivityRecord(address user);
+
+    /// @dev Reverts when the user has not been inactive long enough for decay.
+    error DecayNotEligible(address user, uint256 elapsed, uint256 threshold);
+
     // -----------------------------------------------------------------------
     //  Roles
     // -----------------------------------------------------------------------
@@ -71,12 +96,16 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
 
     /**
      * @notice Per-user credit profile stored on-chain.
-     * @param score           Credit score in the range [0, 1000].
+     * @dev Struct packing: `tier` (uint8) and padding are packed into one slot
+     *      after `score` (uint256) occupies its own slot. Booleans could further
+     *      pack with tier but are stored in separate mappings for clarity.
+     *
+     * @param score           Credit score in [0, 1000].
      * @param tier            Credit tier (0-3) derived from `score`.
-     * @param collateralRatio Required collateral ratio (e.g. 150 means 150%).
-     * @param totalLoans      Total number of loans the user has taken.
-     * @param repaidLoans     Number of loans the user has fully repaid.
-     * @param lastUpdated     Timestamp of the last profile mutation.
+     * @param collateralRatio Required collateral ratio (e.g. 150 = 150%).
+     * @param totalLoans      Lifetime loan count.
+     * @param repaidLoans     Lifetime repaid loan count.
+     * @param lastUpdated     Timestamp of last profile mutation.
      */
     struct UserProfile {
         uint256 score;
@@ -108,16 +137,16 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     mapping(address => bool) public identityVerified;
 
     // -----------------------------------------------------------------------
-    //  Reputation Decay (Upgrade 2)
+    //  Reputation Decay
     // -----------------------------------------------------------------------
 
     /// @notice Timestamp of each user's last score-changing activity.
     mapping(address => uint256) public lastScoreActivity;
 
-    /// @notice Duration of moderate inactivity before minor decay.
+    /// @notice Duration of moderate inactivity before minor decay (180 days).
     uint256 public constant DECAY_THRESHOLD_MODERATE = 180 days;
 
-    /// @notice Duration of severe inactivity before major decay.
+    /// @notice Duration of severe inactivity before major decay (365 days).
     uint256 public constant DECAY_THRESHOLD_SEVERE = 365 days;
 
     /// @notice Points deducted for moderate inactivity (180+ days).
@@ -130,7 +159,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     //  Events
     // -----------------------------------------------------------------------
 
-    /// @notice Emitted when a user's credit score is updated by the ZK verifier.
+    /// @notice Emitted when a user's credit score is set by the ZK verifier.
     /// @param user     The address whose score was updated.
     /// @param newScore The new absolute score assigned.
     /// @param tier     The new tier derived from the score.
@@ -159,6 +188,10 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     event IdentityBound(bytes32 indexed identityHash, address indexed wallet);
 
     /// @notice Emitted when a reputation decay is applied.
+    /// @param user     The user whose score decayed.
+    /// @param penalty  The signed penalty applied.
+    /// @param newScore The resulting score.
+    /// @param newTier  The resulting tier.
     event ReputationDecayed(address indexed user, int256 penalty, uint256 newScore, uint8 newTier);
 
     // -----------------------------------------------------------------------
@@ -167,7 +200,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
 
     /**
      * @notice Deploys the CreditScoreZK contract and grants admin role to the deployer.
-     * @dev New users start with score 0, tier 0, and collateral ratio 150.
+     * @dev New users start with score 0, tier 0, collateral ratio 150.
      */
     constructor() {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -180,7 +213,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @notice Sets a user's credit score from a verified ZK proof.
      * @dev Only callable by the ZK verifier contract (VERIFIER_ROLE).
-     *      Recalculates the tier and collateral ratio based on the new score.
+     *      Recalculates tier and collateral ratio. Requires verified identity.
      * @param user     The address whose score is being updated.
      * @param newScore The new score in [0, 1000].
      */
@@ -188,9 +221,9 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         address user,
         uint256 newScore
     ) external onlyRole(VERIFIER_ROLE) whenNotPaused {
-        require(user != address(0), "CreditScoreZK: zero address");
-        require(newScore <= 1000, "CreditScoreZK: score exceeds 1000");
-        require(identityVerified[user], "CreditScoreZK: identity not verified via Moca");
+        if (user == address(0)) revert ZeroAddress();
+        if (newScore > 1000) revert ScoreExceedsMaximum(newScore);
+        if (!identityVerified[user]) revert IdentityNotVerified(user);
 
         UserProfile storage profile = _profiles[user];
         profile.score = newScore;
@@ -204,28 +237,27 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     /**
      * @notice Adjusts a user's credit score by a signed delta.
      * @dev Only callable by the lending pool (LENDING_POOL_ROLE).
-     *      The resulting score is clamped to [0, 1000]. Recalculates tier and
-     *      collateral ratio after the adjustment.
+     *      The resulting score is clamped to [0, 1000]. Initializes default
+     *      collateral ratio for new profiles.
      * @param user  The address whose score is being adjusted.
-     * @param delta The signed change to apply (positive = improvement, negative = penalty).
+     * @param delta The signed change (positive = improvement, negative = penalty).
      */
     function adjustScore(
         address user,
         int256 delta
     ) external onlyRole(LENDING_POOL_ROLE) whenNotPaused {
-        require(user != address(0), "CreditScoreZK: zero address");
+        if (user == address(0)) revert ZeroAddress();
 
         UserProfile storage profile = _profiles[user];
 
-        // Ensure the profile has a valid default collateral ratio if new.
+        // Initialize default collateral ratio for first-time users.
         if (profile.lastUpdated == 0) {
             profile.collateralRatio = 150;
         }
 
-        int256 current = int256(profile.score);
-        int256 updated = current + delta;
+        int256 updated = int256(profile.score) + delta;
 
-        // Clamp to [0, 1000].
+        // Clamp to [0, 1000] — enforces INV-1.
         if (updated < 0) {
             updated = 0;
         } else if (updated > 1000) {
@@ -252,16 +284,17 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     function incrementLoans(
         address user
     ) external onlyRole(LENDING_POOL_ROLE) whenNotPaused {
-        require(user != address(0), "CreditScoreZK: zero address");
+        if (user == address(0)) revert ZeroAddress();
 
         UserProfile storage profile = _profiles[user];
 
-        // Ensure the profile has a valid default collateral ratio if new.
         if (profile.lastUpdated == 0) {
             profile.collateralRatio = 150;
         }
 
-        profile.totalLoans += 1;
+        unchecked {
+            profile.totalLoans += 1;
+        }
         profile.lastUpdated = block.timestamp;
 
         emit LoanIncremented(user, profile.totalLoans);
@@ -275,16 +308,17 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     function incrementRepaidLoans(
         address user
     ) external onlyRole(LENDING_POOL_ROLE) whenNotPaused {
-        require(user != address(0), "CreditScoreZK: zero address");
+        if (user == address(0)) revert ZeroAddress();
 
         UserProfile storage profile = _profiles[user];
 
-        // Ensure the profile has a valid default collateral ratio if new.
         if (profile.lastUpdated == 0) {
             profile.collateralRatio = 150;
         }
 
-        profile.repaidLoans += 1;
+        unchecked {
+            profile.repaidLoans += 1;
+        }
         profile.lastUpdated = block.timestamp;
 
         emit RepaidLoanIncremented(user, profile.repaidLoans);
@@ -299,17 +333,14 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      * @dev Uses the user's current collateral ratio. New users default to 150%.
      * @param user       The borrower address.
      * @param loanAmount The amount the user wishes to borrow.
-     * @return The required collateral amount (loanAmount * collateralRatio / 100).
+     * @return The required collateral (loanAmount * collateralRatio / 100).
      */
     function getCollateralRequired(
         address user,
         uint256 loanAmount
     ) external view returns (uint256) {
         uint256 ratio = _profiles[user].collateralRatio;
-        // Default ratio for users with no profile yet.
-        if (ratio == 0) {
-            ratio = 150;
-        }
+        if (ratio == 0) ratio = 150;
         return (loanAmount * ratio) / 100;
     }
 
@@ -317,7 +348,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      * @notice Returns the tier and collateral ratio for a user.
      * @param user The address to query.
      * @return tier            The user's current tier (0-3).
-     * @return collateralRatio The user's current collateral ratio (e.g. 150).
+     * @return collateralRatio The user's current collateral ratio.
      */
     function getUserTier(
         address user
@@ -325,10 +356,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         UserProfile storage profile = _profiles[user];
         tier = profile.tier;
         collateralRatio = profile.collateralRatio;
-        // Default for users with no profile.
-        if (collateralRatio == 0) {
-            collateralRatio = 150;
-        }
+        if (collateralRatio == 0) collateralRatio = 150;
     }
 
     /**
@@ -337,9 +365,9 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      * @return score           The user's credit score (0-1000).
      * @return tier            The user's tier (0-3).
      * @return collateralRatio The user's collateral ratio.
-     * @return totalLoans      Total loans taken by the user.
-     * @return repaidLoans     Total loans repaid by the user.
-     * @return lastUpdated     Timestamp of the last profile update.
+     * @return totalLoans      Total loans taken.
+     * @return repaidLoans     Total loans repaid.
+     * @return lastUpdated     Timestamp of last profile update.
      */
     function getUserProfile(
         address user
@@ -362,10 +390,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         totalLoans = profile.totalLoans;
         repaidLoans = profile.repaidLoans;
         lastUpdated = profile.lastUpdated;
-        // Default for users with no profile.
-        if (collateralRatio == 0) {
-            collateralRatio = 150;
-        }
+        if (collateralRatio == 0) collateralRatio = 150;
     }
 
     /**
@@ -378,48 +403,41 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     }
 
     // -----------------------------------------------------------------------
-    //  External / Public — Reputation Decay (Upgrade 2)
+    //  External / Public — Reputation Decay
     // -----------------------------------------------------------------------
 
     /**
      * @notice Applies reputation decay to an inactive user.
-     * @dev Anyone can call this function. Decay is applied only if:
-     *      - The user has a non-zero score.
-     *      - The user has been inactive for at least 180 days.
+     * @dev Anyone can call this. Decay is applied only if the user has a
+     *      non-zero score and has been inactive for >= 180 days.
      *
-     *      180-364 days inactive → -20 points
-     *      365+ days inactive    → -50 points
+     *      180-364 days inactive => -20 points (moderate)
+     *      365+   days inactive => -50 points (severe)
      *
-     *      The lastScoreActivity timestamp is reset after decay, preventing
-     *      repeated decay application in the same period.
+     *      Resets lastScoreActivity to prevent repeated application.
      *
      * @param user The address whose score should be decayed.
      */
     function applyDecay(address user) external whenNotPaused {
-        require(user != address(0), "CreditScoreZK: zero address");
+        if (user == address(0)) revert ZeroAddress();
 
         UserProfile storage profile = _profiles[user];
-        require(profile.score > 0, "CreditScoreZK: score already 0");
+        if (profile.score == 0) revert ScoreAlreadyZero(user);
 
         uint256 lastActivity = lastScoreActivity[user];
-        // If never set, use lastUpdated from the profile.
-        if (lastActivity == 0) {
-            lastActivity = profile.lastUpdated;
-        }
-        require(lastActivity > 0, "CreditScoreZK: no activity record");
+        if (lastActivity == 0) lastActivity = profile.lastUpdated;
+        if (lastActivity == 0) revert NoActivityRecord(user);
 
         uint256 elapsed = block.timestamp - lastActivity;
-        require(elapsed >= DECAY_THRESHOLD_MODERATE, "CreditScoreZK: not eligible for decay");
-
-        int256 penalty;
-        if (elapsed >= DECAY_THRESHOLD_SEVERE) {
-            penalty = DECAY_PENALTY_SEVERE;
-        } else {
-            penalty = DECAY_PENALTY_MODERATE;
+        if (elapsed < DECAY_THRESHOLD_MODERATE) {
+            revert DecayNotEligible(user, elapsed, DECAY_THRESHOLD_MODERATE);
         }
 
-        int256 current = int256(profile.score);
-        int256 updated = current + penalty;
+        int256 penalty = elapsed >= DECAY_THRESHOLD_SEVERE
+            ? DECAY_PENALTY_SEVERE
+            : DECAY_PENALTY_MODERATE;
+
+        int256 updated = int256(profile.score) + penalty;
         if (updated < 0) updated = 0;
 
         profile.score = uint256(updated);
@@ -431,7 +449,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice Returns the time since a user's last score activity.
+     * @notice Returns the time since a user's last score activity and decay eligibility.
      * @param user The address to query.
      * @return elapsed   Seconds since last activity.
      * @return decayable Whether the user is eligible for decay.
@@ -440,9 +458,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         address user
     ) external view returns (uint256 elapsed, bool decayable) {
         uint256 lastActivity = lastScoreActivity[user];
-        if (lastActivity == 0) {
-            lastActivity = _profiles[user].lastUpdated;
-        }
+        if (lastActivity == 0) lastActivity = _profiles[user].lastUpdated;
         if (lastActivity == 0) return (0, false);
 
         elapsed = block.timestamp - lastActivity;
@@ -455,8 +471,8 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
 
     /**
      * @notice Binds a Moca identity hash to a wallet address.
-     * @dev Only callable by DEFAULT_ADMIN_ROLE. Each identity can only be
-     *      bound to one wallet, and each wallet can only have one identity.
+     * @dev Only callable by DEFAULT_ADMIN_ROLE. Enforces the bijective mapping
+     *      invariant (INV-4): one identity <=> one wallet.
      * @param identityHash The keccak256 hash of the Moca identity ID.
      * @param wallet       The wallet address to bind.
      */
@@ -464,14 +480,13 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
         bytes32 identityHash,
         address wallet
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(
-            identityToWallet[identityHash] == address(0),
-            "CreditScoreZK: identity already bound to another wallet"
-        );
-        require(
-            walletToIdentity[wallet] == bytes32(0),
-            "CreditScoreZK: wallet already has identity"
-        );
+        if (wallet == address(0)) revert ZeroAddress();
+        if (identityToWallet[identityHash] != address(0)) {
+            revert IdentityAlreadyBound(identityHash);
+        }
+        if (walletToIdentity[wallet] != bytes32(0)) {
+            revert WalletAlreadyBound(wallet);
+        }
 
         identityToWallet[identityHash] = wallet;
         walletToIdentity[wallet] = identityHash;
@@ -485,9 +500,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
      * @param wallet The wallet address to check.
      * @return True if the wallet has a verified identity.
      */
-    function isIdentityVerified(
-        address wallet
-    ) external view returns (bool) {
+    function isIdentityVerified(address wallet) external view returns (bool) {
         return identityVerified[wallet];
     }
 
@@ -495,18 +508,12 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     //  Admin — Emergency Controls
     // -----------------------------------------------------------------------
 
-    /**
-     * @notice Pauses all state-changing operations.
-     * @dev Only callable by DEFAULT_ADMIN_ROLE.
-     */
+    /// @notice Pauses all state-changing operations. Only DEFAULT_ADMIN_ROLE.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
-    /**
-     * @notice Unpauses all state-changing operations.
-     * @dev Only callable by DEFAULT_ADMIN_ROLE.
-     */
+    /// @notice Unpauses all state-changing operations. Only DEFAULT_ADMIN_ROLE.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
@@ -516,13 +523,7 @@ contract CreditScoreZK is AccessControl, ReentrancyGuard, Pausable {
     // -----------------------------------------------------------------------
 
     /**
-     * @dev Recalculates the tier and collateral ratio for a profile based on its score.
-     *
-     *      Tier 0: score < 200   -> 150%
-     *      Tier 1: 200-499       -> 135%
-     *      Tier 2: 500-749       -> 125%
-     *      Tier 3: 750+          -> 110%
-     *
+     * @dev Recalculates tier and collateral ratio from score. Enforces INV-2 and INV-3.
      * @param profile The storage reference to the user's profile.
      */
     function _recalculateTier(UserProfile storage profile) internal {
