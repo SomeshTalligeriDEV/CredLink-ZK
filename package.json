@@ -1,0 +1,22 @@
+{
+  "name": "credlink-zk",
+  "version": "1.0.0",
+  "description": "CredLink ZK - Privacy-Preserving Behavioral Credit Protocol on BNB Chain",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:testnet": "hardhat run scripts/deploy.js --network opbnb_testnet",
+    "deploy:local": "hardhat run scripts/deploy.js --network hardhat"
+  },
+  "keywords": ["zk", "defi", "bnb-chain", "credit-scoring", "zero-knowledge"],
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "dotenv": "^16.3.1",
+    "snarkjs": "^0.7.3"
+  }
+}

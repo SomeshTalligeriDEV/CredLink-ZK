@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gold: #F0B90B;
+  --dark: #0D0D0D;
+  --dark-card: #1A1A1A;
+}
+
+body {
+  background-color: var(--dark);
+  color: #ffffff;
+}
+
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 185, 11, 0.4); }
+  50% { box-shadow: 0 0 20px 10px rgba(240, 185, 11, 0.1); }
+}
+
+.animate-pulse-gold {
+  animation: pulse-gold 2s ease-in-out infinite;
+}
+
+@keyframes score-fill {
+  from { stroke-dashoffset: 283; }
+}
+
+.score-ring {
+  animation: score-fill 1.5s ease-out forwards;
+}
