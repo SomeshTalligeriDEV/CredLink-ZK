@@ -84,6 +84,10 @@ Lending protocols that do attempt credit scoring require borrowers to expose the
 
 CredLink ZK is organized into four distinct layers, each with a clear responsibility boundary.
 
+### System Architecture
+
+![System Architecture](assets/systm.png)
+
 ### Layer 1: Identity Layer
 
 The identity layer establishes Sybil resistance through bijective wallet-to-identity mapping.
