@@ -47,9 +47,9 @@ app.get('/api/health', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(`[ERROR] ${err.message}`);
-  console.error(err.stack);
+  if (process.env.NODE_ENV !== 'production') console.error(err.stack);
   res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
+    error: process.env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message,
     timestamp: new Date().toISOString()
   });
 });

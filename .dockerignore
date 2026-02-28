@@ -1,0 +1,14 @@
+node_modules
+.env
+.env.local
+backend/.env
+frontend/.env.local
+.git
+.gitignore
+cache
+artifacts
+typechain-types
+coverage
+frontend/.next
+frontend/loading
+*.md

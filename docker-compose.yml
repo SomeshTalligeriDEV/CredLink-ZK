@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  credlink-zk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_CHAIN_ID: 97
+        NEXT_PUBLIC_RPC_URL: https://data-seed-prebsc-1-s1.binance.org:8545/
+        NEXT_PUBLIC_CREDITSCORE_ADDRESS: "0x5ED05A35D14cae38Bf7A73AeCF295320DA17dF33"
+        NEXT_PUBLIC_LENDING_POOL_ADDRESS: "0x53c95d8dAFBD171b28B9D874C02534e7b60390E5"
+        NEXT_PUBLIC_COLLATERAL_MANAGER_ADDRESS: "0xBbEd9274652F6e82f33D2777970b0719FE2f1F99"
+        NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    env_file:
+      - backend/.env
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
