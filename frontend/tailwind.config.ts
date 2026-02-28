@@ -9,11 +9,25 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        gold: '#F0B90B',
-        'gold-dark': '#C99A0A',
-        dark: '#0D0D0D',
-        'dark-card': '#1A1A1A',
-        'dark-border': '#2A2A2A',
+        gold: '#F5A623',
+        'gold-light': '#FFB547',
+        'gold-dark': '#D4891C',
+        dark: '#0B0D10',
+        'dark-card': '#14171C',
+        'dark-sidebar': '#0E1014',
+        'dark-border': '#1E2128',
+        'text-secondary': '#B0B3B8',
+        'text-muted': '#6B6F76',
+        success: '#22C55E',
+        danger: '#EF4444',
+      },
+      boxShadow: {
+        'card': '0 20px 40px rgba(0,0,0,0.4)',
+        'gold-glow': '0 0 20px rgba(245,166,35,0.4)',
+        'gold-glow-sm': '0 0 10px rgba(245,166,35,0.3)',
+      },
+      fontFamily: {
+        sans: ['SF Pro', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
     },
   },

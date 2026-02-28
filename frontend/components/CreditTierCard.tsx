@@ -20,8 +20,8 @@ export default function CreditTierCard({ score, tier, collateralRatio, isConnect
   const strokeDashoffset = circumference * (1 - progress);
 
   return (
-    <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-6 flex flex-col items-center">
-      <h3 className="text-sm text-gray-400 mb-4 uppercase tracking-wider">Credit Score</h3>
+    <div className="bg-[#14171C] rounded-2xl shadow-card p-6 flex flex-col items-center">
+      <h3 className="text-sm text-[#B0B3B8] mb-4 uppercase tracking-wider">Credit Score</h3>
 
       {/* Circular Score Display */}
       <div className="relative w-48 h-48 mb-6">
@@ -30,14 +30,14 @@ export default function CreditTierCard({ score, tier, collateralRatio, isConnect
           <circle
             cx="100" cy="100" r={radius}
             fill="none"
-            stroke="#2A2A2A"
+            stroke="#1E2128"
             strokeWidth="12"
           />
           {/* Score ring */}
           <circle
             cx="100" cy="100" r={radius}
             fill="none"
-            stroke={isConnected ? '#F0B90B' : '#555'}
+            stroke={isConnected ? '#F5A623' : '#555'}
             strokeWidth="12"
             strokeLinecap="round"
             strokeDasharray={circumference}
@@ -46,10 +46,10 @@ export default function CreditTierCard({ score, tier, collateralRatio, isConnect
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-4xl font-bold" style={{ color: isConnected ? '#F0B90B' : '#888' }}>
+          <span className="text-4xl font-bold" style={{ color: isConnected ? '#F5A623' : '#888' }}>
             {isConnected ? score : '---'}
           </span>
-          <span className="text-gray-400 text-sm">/ 1000</span>
+          <span className="text-[#B0B3B8] text-sm">/ 1000</span>
         </div>
       </div>
 
@@ -68,19 +68,19 @@ export default function CreditTierCard({ score, tier, collateralRatio, isConnect
       {/* Collateral Ratio */}
       <div className="w-full space-y-2 mt-2">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-400">Collateral Ratio</span>
+          <span className="text-[#B0B3B8]">Collateral Ratio</span>
           <span className="text-gold font-medium">{collateralRatio}%</span>
         </div>
-        <div className="w-full bg-[#2A2A2A] rounded-full h-2">
+        <div className="w-full bg-white/10 rounded-full h-2">
           <div
             className="h-2 rounded-full transition-all duration-500"
             style={{
               width: `${((150 - collateralRatio) / 50) * 100 + 20}%`,
-              backgroundColor: '#F0B90B',
+              backgroundColor: '#F5A623',
             }}
           />
         </div>
-        <p className="text-xs text-gray-500 text-center">
+        <p className="text-xs text-[#6B6F76] text-center">
           Lower ratio = Better terms (min 110%)
         </p>
       </div>
