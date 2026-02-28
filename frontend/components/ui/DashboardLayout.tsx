@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Search, Menu, X } from 'lucide-react';
+import { Search, Menu, X, ShieldCheck } from 'lucide-react';
 import WalletConnect from '@/components/WalletConnect';
 import Sidebar from '@/components/ui/Sidebar';
+import { useMocaAuth } from '@/contexts/AuthContext';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -12,6 +13,7 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { mocaVerified, loading, loginWithMoca } = useMocaAuth();
 
   return (
     <div className="min-h-screen bg-[#0B0D10]">
@@ -44,8 +46,25 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
           </div>
 
-          {/* Right: Wallet */}
+          {/* Right: Moca Status + Wallet */}
           <div className="flex items-center gap-3">
+            {mocaVerified ? (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full">
+                <ShieldCheck size={14} className="text-green-400" />
+                <span className="text-green-400 text-xs font-semibold">Moca Verified</span>
+              </div>
+            ) : (
+              <button
+                onClick={loginWithMoca}
+                disabled={loading}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-[#F5A623]/10 border border-[#F5A623]/20 rounded-full hover:bg-[#F5A623]/20 transition-colors disabled:opacity-50"
+              >
+                <ShieldCheck size={14} className="text-[#F5A623]" />
+                <span className="text-[#F5A623] text-xs font-semibold">
+                  {loading ? 'Checking...' : 'Login with Moca'}
+                </span>
+              </button>
+            )}
             <WalletConnect />
           </div>
         </div>
@@ -63,12 +82,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         {/* Footer */}
         <footer className="px-4 md:px-8 pb-8 pt-4">
           <div className="border-t border-white/5 pt-6 text-center">
-            <p className="text-xs text-[#6B6F76] italic">
-              &quot;Built for everyone who moved abroad and lost their financial identity.
-              Your blockchain history is your credit.&quot;
+            <p className="text-xs text-[#6B6F76]">
+              CredLink ZK &mdash; On-chain credit scoring with zero-knowledge proofs
             </p>
-            <p className="text-xs text-[#F5A623]/40 mt-1">
-              CredLink ZK — BNB Chain x YZI Labs Hackathon Bengaluru 2026
+            <p className="text-xs text-[#6B6F76]/50 mt-1">
+              BSC Testnet (Chain 97)
             </p>
           </div>
         </footer>

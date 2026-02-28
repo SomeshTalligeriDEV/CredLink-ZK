@@ -62,7 +62,7 @@ export default function RepayPage() {
       <div className="text-center py-20">
         <Shield className="w-16 h-16 text-gold mx-auto mb-4" />
         <h2 className="text-2xl font-bold mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-400">Connect your wallet to view and repay your loans</p>
+        <p className="text-[#B0B3B8]">Connect your wallet to view and repay your loans</p>
       </div>
     );
   }
@@ -71,28 +71,28 @@ export default function RepayPage() {
     <div className="max-w-3xl mx-auto space-y-8">
       <div>
         <h1 className="text-3xl font-bold mb-2">Repay <span className="text-gold">Loans</span></h1>
-        <p className="text-gray-400">Repay on time to boost your credit score</p>
+        <p className="text-[#B0B3B8]">Repay on time to boost your credit score</p>
       </div>
 
       {/* Summary Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-4">
-          <p className="text-gray-400 text-sm">Total Owed</p>
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-4">
+          <p className="text-[#B0B3B8] text-sm">Total Owed</p>
           <p className="text-xl font-bold">{totalOwed > 0 ? formatEther(totalOwed) : '0.00'} BNB</p>
         </div>
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-4">
-          <p className="text-gray-400 text-sm">Collateral Locked</p>
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-4">
+          <p className="text-[#B0B3B8] text-sm">Collateral Locked</p>
           <p className="text-xl font-bold">{totalCollateralLocked > 0 ? formatEther(totalCollateralLocked) : '0.00'} BNB</p>
         </div>
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-4">
-          <p className="text-gray-400 text-sm">Active Loans</p>
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-4">
+          <p className="text-[#B0B3B8] text-sm">Active Loans</p>
           <p className="text-xl font-bold">{activeLoans.length}</p>
         </div>
       </div>
 
       {/* Success Message */}
       {successMessage && (
-        <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg flex items-center gap-2">
+        <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-xl flex items-center gap-2">
           <Check className="w-5 h-5 text-green-400" />
           <p className="text-green-400">{successMessage}</p>
           {txHash && (
@@ -105,10 +105,10 @@ export default function RepayPage() {
 
       {/* Loan Cards */}
       {activeLoans.length === 0 ? (
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-12 text-center">
-          <Wallet className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-400 mb-2">No Active Loans</h3>
-          <p className="text-gray-500 text-sm">Start borrowing to build your credit score.</p>
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-12 text-center">
+          <Wallet className="w-12 h-12 text-[#6B6F76] mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-[#B0B3B8] mb-2">No Active Loans</h3>
+          <p className="text-[#6B6F76] text-sm">Start borrowing to build your credit score.</p>
           <a href="/borrow" className="inline-flex items-center gap-1 mt-4 text-gold text-sm hover:underline">
             Go to Borrow <ArrowUpRight className="w-3 h-3" />
           </a>
@@ -124,10 +124,10 @@ export default function RepayPage() {
             const isRepaying = repayingLoanId === loan.id && (isPending || isConfirming);
 
             return (
-              <div key={loan.id.toString()} className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-6">
+              <div key={loan.id.toString()} className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <span className="text-gray-400 text-sm">Loan #{loan.id.toString()}</span>
+                    <span className="text-[#B0B3B8] text-sm">Loan #{loan.id.toString()}</span>
                     <p className="text-2xl font-bold">{amount} BNB</p>
                   </div>
                   <span className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -139,22 +139,22 @@ export default function RepayPage() {
 
                 <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
                   <div>
-                    <p className="text-gray-400">Collateral Locked</p>
+                    <p className="text-[#B0B3B8]">Collateral Locked</p>
                     <p className="font-medium">{collateral} BNB</p>
                   </div>
                   <div>
-                    <p className="text-gray-400">Due Date</p>
+                    <p className="text-[#B0B3B8]">Due Date</p>
                     <p className="font-medium flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       {dueDate.toLocaleDateString()}
                     </p>
                   </div>
                   <div>
-                    <p className="text-gray-400">Interest</p>
+                    <p className="text-[#B0B3B8]">Interest</p>
                     <p className="font-medium">2%</p>
                   </div>
                   <div>
-                    <p className="text-gray-400">Repay Amount</p>
+                    <p className="text-[#B0B3B8]">Repay Amount</p>
                     <p className="font-medium text-gold">{repayAmount} BNB</p>
                   </div>
                 </div>
@@ -162,7 +162,7 @@ export default function RepayPage() {
                 <button
                   onClick={() => handleRepay(loan)}
                   disabled={isRepaying}
-                  className="w-full px-4 py-3 bg-gold text-black font-semibold rounded-lg hover:bg-gold-dark transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full px-4 py-3 bg-gold text-black font-semibold rounded-full hover:shadow-gold-glow transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isRepaying ? (
                     <>

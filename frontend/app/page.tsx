@@ -1,54 +1,48 @@
 'use client';
 
 import { useAccount } from 'wagmi';
-import { useState, useEffect } from 'react';
-import { Shield, TrendingUp, Wallet, Activity, Brain, ChevronRight, Zap, Lock } from 'lucide-react';
-import { analyzeWallet, generateProof, getRiskExplanation, calculateTierFromScore, getCollateralRatio, getTierName, getTierColor } from '@/lib/zk-proof';
+import { useState } from 'react';
+import { Shield, Wallet, Activity, TrendingUp, Zap, Lock, ShieldCheck } from 'lucide-react';
+import { analyzeWallet, generateProof, getRiskExplanation, getCollateralRatio, getTierName } from '@/lib/zk-proof';
 import type { WalletAnalysis, ProofResult } from '@/lib/zk-proof';
+import { useUserProfile, usePoolMetrics, useUserLoans, useScoreHistory } from '@/hooks/useContractData';
+import { useMocaAuth } from '@/contexts/AuthContext';
 import CreditTierCard from '@/components/CreditTierCard';
-import CapitalEfficiency from '@/components/CapitalEfficiency';
 import AIAdvisor from '@/components/AIAdvisor';
+import ScoreEvolutionChart from '@/components/charts/ScoreEvolutionChart';
+import CapitalEfficiencyChart from '@/components/charts/CapitalEfficiencyChart';
+import TrustNetworkGraph from '@/components/charts/TrustNetworkGraph';
+import RiskDistributionChart from '@/components/charts/RiskDistributionChart';
 
 export default function Dashboard() {
   const { address, isConnected } = useAccount();
+  const { mocaVerified, identityHash, loginWithMoca, loading: mocaLoading } = useMocaAuth();
+
+  // On-chain data hooks
+  const { profile, isLoading: profileLoading } = useUserProfile();
+  const { totalBorrowed, poolBalance, isLoading: poolLoading } = usePoolMetrics();
+  const { activeLoans, loans, isLoading: loansLoading } = useUserLoans();
+  const { events: scoreHistory, isLoading: historyLoading } = useScoreHistory();
+
+  // ZK proof state
   const [analysis, setAnalysis] = useState<WalletAnalysis | null>(null);
   const [proofResult, setProofResult] = useState<ProofResult | null>(null);
-  const [riskExplanation, setRiskExplanation] = useState<string>('');
+  const [riskExplanation, setRiskExplanation] = useState('');
   const [loading, setLoading] = useState(false);
   const [proofGenerated, setProofGenerated] = useState(false);
 
-  // Mock data for when wallet is not connected
-  const mockScore = 720;
-  const mockTier = 2;
+  // Derive values from on-chain profile (0 if no profile)
+  const score = profile?.score ?? 0;
+  const tier = profile?.tier ?? 0;
+  const collateralRatio = profile?.collateralRatio ?? getCollateralRatio(tier);
 
-  const score = proofResult?.score ?? (analysis?.estimatedScore ?? mockScore);
-  const tier = proofResult?.tier ?? (analysis?.tier ?? mockTier);
-  const collateralRatio = getCollateralRatio(tier);
-
-  useEffect(() => {
-    if (isConnected && address) {
-      handleAnalyze();
-    }
-  }, [isConnected, address]);
-
-  async function handleAnalyze() {
+  async function handleGenerateProof() {
     if (!address) return;
     setLoading(true);
     try {
-      const result = await analyzeWallet(address);
-      setAnalysis(result);
-    } catch (err) {
-      console.error('Analysis error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleGenerateProof() {
-    if (!address || !analysis) return;
-    setLoading(true);
-    try {
-      const proof = await generateProof(address, analysis);
+      const walletAnalysis = await analyzeWallet(address);
+      setAnalysis(walletAnalysis);
+      const proof = await generateProof(address, walletAnalysis);
       setProofResult(proof);
       setProofGenerated(true);
 
@@ -56,8 +50,8 @@ export default function Dashboard() {
         address,
         score: proof.score,
         tier: proof.tier,
-        totalLoans: analysis.txCount,
-        repaidLoans: analysis.repayments,
+        totalLoans: walletAnalysis.txCount,
+        repaidLoans: walletAnalysis.repayments,
       });
       setRiskExplanation(explanation);
     } catch (err) {
@@ -68,50 +62,98 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Hero Section */}
-      <div className="text-center py-12">
-        <div className="inline-flex items-center px-3 py-1 rounded-full bg-gold/10 border border-gold/20 text-gold text-xs mb-4">
-          <Shield className="w-3 h-3 mr-1" /> Zero-Knowledge Verified
-        </div>
-        <h1 className="text-4xl md:text-5xl font-bold mb-4">
-          Your <span className="text-gold">Privacy-First</span> Credit Score
-        </h1>
-        <p className="text-gray-400 text-lg max-w-2xl mx-auto">
-          Prove creditworthiness without revealing your financial fingerprint.
-          ZK proofs on BNB Chain enable reduced collateral with full privacy.
-        </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold">Credit Dashboard</h1>
+        <p className="text-[#6B6F76] text-sm mt-1">On-chain credit score and protocol metrics</p>
       </div>
 
-      {/* Main Grid */}
+      {/* Moca Identity Status */}
+      {isConnected && (
+        <div className={`rounded-2xl shadow-card border p-4 ${
+          mocaVerified
+            ? 'bg-green-500/5 border-green-500/20'
+            : 'bg-[#F5A623]/5 border-[#F5A623]/20'
+        }`}>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-lg ${mocaVerified ? 'bg-green-500/10' : 'bg-[#F5A623]/10'}`}>
+                <ShieldCheck className={`w-4 h-4 ${mocaVerified ? 'text-green-400' : 'text-[#F5A623]'}`} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">
+                  {mocaVerified ? 'Moca Identity Verified' : 'Moca Identity Not Linked'}
+                </h3>
+                <p className="text-xs text-[#6B6F76]">
+                  {mocaVerified
+                    ? `Bound on-chain${identityHash ? ` (${identityHash.slice(0, 10)}...${identityHash.slice(-6)})` : ''}`
+                    : 'Link your Moca identity to unlock borrowing'}
+                </p>
+              </div>
+            </div>
+            {!mocaVerified && (
+              <button
+                onClick={loginWithMoca}
+                disabled={mocaLoading}
+                className="px-4 py-2 bg-[#F5A623] text-[#0B0D10] font-semibold text-sm rounded-full hover:shadow-gold-glow transition-all disabled:opacity-50"
+              >
+                {mocaLoading ? 'Checking...' : 'Verify with Moca'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Row 1: Credit Score + Capital Efficiency */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Credit Score Card */}
         <div className="lg:col-span-1">
-          <CreditTierCard score={score} tier={tier} collateralRatio={collateralRatio} isConnected={isConnected} />
+          <CreditTierCard
+            score={score}
+            tier={tier}
+            collateralRatio={collateralRatio}
+            isConnected={isConnected}
+          />
         </div>
-
-        {/* Capital Efficiency */}
         <div className="lg:col-span-2">
-          <CapitalEfficiency tier={tier} collateralRatio={collateralRatio} />
+          <CapitalEfficiencyChart
+            userTier={isConnected && profile ? profile.tier : null}
+            userCollateralRatio={isConnected && profile ? profile.collateralRatio : null}
+            isLoading={profileLoading}
+          />
         </div>
       </div>
 
-      {/* Generate Proof Section */}
-      <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-6">
+      {/* Row 2: Score Evolution + Risk Distribution */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ScoreEvolutionChart events={scoreHistory} isLoading={historyLoading} />
+        <RiskDistributionChart
+          totalLoans={profile?.totalLoans ?? 0}
+          repaidLoans={profile?.repaidLoans ?? 0}
+          activeLoans={activeLoans.length}
+          isLoading={profileLoading || loansLoading}
+        />
+      </div>
+
+      {/* Row 3: Trust Network */}
+      <TrustNetworkGraph />
+
+      {/* ZK Proof Generation */}
+      <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h3 className="text-lg font-semibold flex items-center gap-2">
-              <Zap className="w-5 h-5 text-gold" />
+              <Zap className="w-5 h-5 text-[#F5A623]" />
               ZK Proof Generation
             </h3>
-            <p className="text-gray-400 text-sm mt-1">
+            <p className="text-[#6B6F76] text-sm mt-1">
               Generate a zero-knowledge proof of your on-chain behavior
             </p>
           </div>
           <button
             onClick={handleGenerateProof}
             disabled={loading || !isConnected}
-            className="px-6 py-3 bg-gold text-black font-semibold rounded-lg hover:bg-gold-dark transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-6 py-3 bg-[#F5A623] text-black font-semibold rounded-full hover:shadow-gold-glow transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {loading ? (
               <>
@@ -132,10 +174,9 @@ export default function Dashboard() {
           </button>
         </div>
         {proofGenerated && proofResult && (
-          <div className="mt-4 p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
-            <p className="text-green-400 text-sm">
-              Proof generated successfully! Score: {proofResult.score}/1000 |
-              Tier: {getTierName(proofResult.tier)} |
+          <div className="mt-4 p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
+            <p className="text-green-400 text-sm font-mono">
+              Score: {proofResult.score}/1000 | Tier: {getTierName(proofResult.tier)} |
               Wallet Age Valid: {proofResult.walletAgeValid === 1 ? 'Yes' : 'No'} |
               Repayment Valid: {proofResult.repaymentValid === 1 ? 'Yes' : 'No'}
             </p>
@@ -147,46 +188,52 @@ export default function Dashboard() {
       </div>
 
       {/* AI Advisor */}
-      {(riskExplanation || !isConnected) && (
+      {riskExplanation && (
         <AIAdvisor
-          explanation={riskExplanation || 'Connect your wallet and generate a ZK proof to receive AI-powered risk assessment.'}
-          score={score}
-          tier={tier}
+          explanation={riskExplanation}
+          score={proofResult?.score ?? score}
+          tier={proofResult?.tier ?? tier}
         />
       )}
 
-      {/* Stats Row */}
+      {/* On-chain Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-5">
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-5">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gold/10 rounded-lg">
-              <Wallet className="w-5 h-5 text-gold" />
+            <div className="p-2 bg-[#F5A623]/10 rounded-lg">
+              <Wallet className="w-5 h-5 text-[#F5A623]" />
             </div>
             <div>
-              <p className="text-gray-400 text-sm">Total Borrowed</p>
-              <p className="text-xl font-bold">{isConnected ? '0.00' : '—'} BNB</p>
+              <p className="text-[#6B6F76] text-xs">Total Borrowed (Pool)</p>
+              <p className="text-xl font-bold font-mono">
+                {poolLoading ? '...' : `${totalBorrowed.toFixed(4)} BNB`}
+              </p>
             </div>
           </div>
         </div>
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-5">
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-5">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gold/10 rounded-lg">
-              <Activity className="w-5 h-5 text-gold" />
+            <div className="p-2 bg-[#F5A623]/10 rounded-lg">
+              <Activity className="w-5 h-5 text-[#F5A623]" />
             </div>
             <div>
-              <p className="text-gray-400 text-sm">Active Loans</p>
-              <p className="text-xl font-bold">{isConnected ? '0' : '—'}</p>
+              <p className="text-[#6B6F76] text-xs">Your Active Loans</p>
+              <p className="text-xl font-bold font-mono">
+                {loansLoading ? '...' : activeLoans.length}
+              </p>
             </div>
           </div>
         </div>
-        <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-5">
+        <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-5">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gold/10 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-gold" />
+            <div className="p-2 bg-[#F5A623]/10 rounded-lg">
+              <TrendingUp className="w-5 h-5 text-[#F5A623]" />
             </div>
             <div>
-              <p className="text-gray-400 text-sm">Reputation Points</p>
-              <p className="text-xl font-bold">{score}</p>
+              <p className="text-[#6B6F76] text-xs">On-chain Credit Score</p>
+              <p className="text-xl font-bold font-mono">
+                {profileLoading ? '...' : `${score} / 1000`}
+              </p>
             </div>
           </div>
         </div>

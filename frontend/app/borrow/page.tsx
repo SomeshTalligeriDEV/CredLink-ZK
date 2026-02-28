@@ -81,7 +81,7 @@ export default function BorrowPage() {
       <div className="text-center py-20">
         <Shield className="w-16 h-16 text-gold mx-auto mb-4" />
         <h2 className="text-2xl font-bold mb-2">Connect Your Wallet</h2>
-        <p className="text-gray-400">Connect your wallet to start borrowing with reduced collateral</p>
+        <p className="text-[#B0B3B8]">Connect your wallet to start borrowing with reduced collateral</p>
       </div>
     );
   }
@@ -90,7 +90,7 @@ export default function BorrowPage() {
     <div className="max-w-2xl mx-auto space-y-8">
       <div>
         <h1 className="text-3xl font-bold mb-2">Borrow with <span className="text-gold">ZK Privacy</span></h1>
-        <p className="text-gray-400">Prove your creditworthiness, unlock better rates</p>
+        <p className="text-[#B0B3B8]">Prove your creditworthiness, unlock better rates</p>
       </div>
 
       {/* Step Indicator */}
@@ -98,26 +98,26 @@ export default function BorrowPage() {
         {steps.map((s, i) => (
           <div key={s.num} className="flex items-center">
             <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-              step >= s.num ? 'bg-gold/20 text-gold border border-gold/30' : 'bg-[#1A1A1A] text-gray-500 border border-[#2A2A2A]'
+              step >= s.num ? 'bg-gold/20 text-gold border border-gold/30' : 'bg-[#14171C] text-gray-500 border border-white/10'
             }`}>
               {step > s.num ? <Check className="w-4 h-4" /> : <span>{s.num}</span>}
               <span className="hidden sm:inline">{s.label}</span>
             </div>
-            {i < steps.length - 1 && <ArrowRight className="w-4 h-4 text-gray-600 mx-2" />}
+            {i < steps.length - 1 && <ArrowRight className="w-4 h-4 text-[#6B6F76] mx-2" />}
           </div>
         ))}
       </div>
 
       {/* Error Display */}
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2">
+        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-2">
           <AlertCircle className="w-5 h-5 text-red-400" />
           <p className="text-red-400 text-sm">{error}</p>
         </div>
       )}
 
       {/* Step Content */}
-      <div className="bg-[#1A1A1A] rounded-xl border border-[#2A2A2A] p-6">
+      <div className="bg-[#14171C] rounded-2xl shadow-card border border-white/5 p-6">
         {step === 1 && (
           <div className="text-center space-y-6">
             <div className="p-4 bg-gold/5 rounded-full w-20 h-20 mx-auto flex items-center justify-center">
@@ -125,7 +125,7 @@ export default function BorrowPage() {
             </div>
             <div>
               <h3 className="text-xl font-semibold mb-2">Generate ZK Proof</h3>
-              <p className="text-gray-400 text-sm">
+              <p className="text-[#B0B3B8] text-sm">
                 Your on-chain behavior will be analyzed locally and a zero-knowledge proof will be generated.
                 No private data leaves your device.
               </p>
@@ -133,7 +133,7 @@ export default function BorrowPage() {
             <button
               onClick={handleGenerateProof}
               disabled={loading}
-              className="px-8 py-3 bg-gold text-black font-semibold rounded-lg hover:bg-gold-dark transition-colors disabled:opacity-50 flex items-center gap-2 mx-auto"
+              className="px-8 py-3 bg-gold text-black font-semibold rounded-full hover:shadow-gold-glow transition-colors disabled:opacity-50 flex items-center gap-2 mx-auto"
             >
               {loading ? (
                 <>
@@ -152,18 +152,18 @@ export default function BorrowPage() {
 
         {step === 2 && proofResult && (
           <div className="space-y-6">
-            <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
+            <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
               <div className="flex items-center gap-2 text-green-400 mb-2">
                 <Check className="w-5 h-5" />
                 <span className="font-medium">Proof Verified</span>
               </div>
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-[#B0B3B8]">
                 Score: {proofResult.score}/1000 | Tier: {getTierName(proofResult.tier)} | Collateral: {collateralRatio}%
               </p>
             </div>
 
             <div>
-              <label className="block text-sm text-gray-400 mb-2">Loan Amount (BNB)</label>
+              <label className="block text-sm text-[#B0B3B8] mb-2">Loan Amount (BNB)</label>
               <input
                 type="number"
                 step="0.01"
@@ -171,25 +171,25 @@ export default function BorrowPage() {
                 value={loanAmount}
                 onChange={(e) => setLoanAmount(e.target.value)}
                 placeholder="0.1"
-                className="w-full bg-[#0D0D0D] border border-[#2A2A2A] rounded-lg px-4 py-3 text-white focus:outline-none focus:border-gold transition-colors"
+                className="w-full bg-[#0B0D10] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-gold transition-colors"
               />
             </div>
 
             {loanAmount && parseFloat(loanAmount) > 0 && (
-              <div className="space-y-3 p-4 bg-[#0D0D0D] rounded-lg">
+              <div className="space-y-3 p-4 bg-[#0B0D10] rounded-xl">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Loan Amount</span>
+                  <span className="text-[#B0B3B8]">Loan Amount</span>
                   <span>{loanAmount} BNB</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Collateral Required</span>
+                  <span className="text-[#B0B3B8]">Collateral Required</span>
                   <span className="text-gold">{collateralRequired.toFixed(4)} BNB ({collateralRatio}%)</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Traditional DeFi Would Require</span>
+                  <span className="text-[#B0B3B8]">Traditional DeFi Would Require</span>
                   <span className="text-red-400">{traditionalCollateral.toFixed(4)} BNB (150%)</span>
                 </div>
-                <div className="border-t border-[#2A2A2A] pt-3 flex justify-between text-sm font-medium">
+                <div className="border-t border-white/10 pt-3 flex justify-between text-sm font-medium">
                   <span className="text-green-400">You Save</span>
                   <span className="text-green-400">{savings.toFixed(4)} BNB ({((savings / traditionalCollateral) * 100).toFixed(1)}%)</span>
                 </div>
@@ -198,7 +198,7 @@ export default function BorrowPage() {
 
             <button
               onClick={handleSetAmount}
-              className="w-full px-6 py-3 bg-gold text-black font-semibold rounded-lg hover:bg-gold-dark transition-colors"
+              className="w-full px-6 py-3 bg-gold text-black font-semibold rounded-full hover:shadow-gold-glow transition-colors"
             >
               Continue to Collateral Lock
             </button>
@@ -207,22 +207,22 @@ export default function BorrowPage() {
 
         {step === 3 && (
           <div className="space-y-6">
-            <div className="space-y-3 p-4 bg-[#0D0D0D] rounded-lg">
+            <div className="space-y-3 p-4 bg-[#0B0D10] rounded-xl">
               <h4 className="font-medium text-gold">Loan Summary</h4>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Borrow</span>
+                <span className="text-[#B0B3B8]">Borrow</span>
                 <span>{loanAmount} BNB</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Lock as Collateral</span>
+                <span className="text-[#B0B3B8]">Lock as Collateral</span>
                 <span>{collateralRequired.toFixed(4)} BNB</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Interest Rate</span>
+                <span className="text-[#B0B3B8]">Interest Rate</span>
                 <span>2%</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-400">Repayment Amount</span>
+                <span className="text-[#B0B3B8]">Repayment Amount</span>
                 <span>{(parseFloat(loanAmount) * 1.02).toFixed(4)} BNB</span>
               </div>
             </div>
@@ -231,7 +231,7 @@ export default function BorrowPage() {
               <button
                 onClick={handleRequestLoan}
                 disabled={isTxPending || isConfirming}
-                className="w-full px-6 py-3 bg-gold text-black font-semibold rounded-lg hover:bg-gold-dark transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full px-6 py-3 bg-gold text-black font-semibold rounded-full hover:shadow-gold-glow transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isTxPending || isConfirming ? (
                   <>
@@ -243,7 +243,7 @@ export default function BorrowPage() {
                 )}
               </button>
             ) : (
-              <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
+              <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
                 <div className="flex items-center gap-2 text-green-400 mb-2">
                   <Check className="w-5 h-5" />
                   <span className="font-medium">Loan Created Successfully!</span>

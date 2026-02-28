@@ -5,23 +5,23 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { defineChain } from 'viem';
 import { useState } from 'react';
 
-const opBNBTestnet = defineChain({
-  id: 5611,
-  name: 'opBNB Testnet',
-  nativeCurrency: { name: 'BNB', symbol: 'tBNB', decimals: 18 },
+const bscTestnet = defineChain({
+  id: 97,
+  name: 'BNB Smart Chain Testnet',
+  nativeCurrency: { name: 'tBNB', symbol: 'tBNB', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://opbnb-testnet-rpc.bnbchain.org'] },
+    default: { http: ['https://data-seed-prebsc-1-s1.binance.org:8545'] },
   },
   blockExplorers: {
-    default: { name: 'opBNBScan', url: 'https://testnet.opbnbscan.com' },
+    default: { name: 'BscScan', url: 'https://testnet.bscscan.com' },
   },
   testnet: true,
 });
 
 const config = createConfig({
-  chains: [opBNBTestnet],
+  chains: [bscTestnet],
   transports: {
-    [opBNBTestnet.id]: http(),
+    [bscTestnet.id]: http(),
   },
 });
 

@@ -36,6 +36,7 @@ app.use((req, res, next) => {
 app.use('/api/credit', creditRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/identity', require('./routes/identity'));
+app.use('/api/auth', require('./routes/auth'));
 app.use('/api/passport', require('./routes/passport'));
 
 // Health check

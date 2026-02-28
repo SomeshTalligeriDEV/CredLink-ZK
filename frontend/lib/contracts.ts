@@ -5,6 +5,8 @@ export const CONTRACT_ADDRESSES = {
   CollateralManager: addresses.CollateralManager as `0x${string}`,
   ZKVerifier: addresses.ZKVerifier as `0x${string}`,
   LendingPool: addresses.LendingPool as `0x${string}`,
+  CreditPassportNFT: (addresses as unknown as Record<string, string>).CreditPassportNFT as `0x${string}`,
+  CrossChainScoreOracle: (addresses as unknown as Record<string, string>).CrossChainScoreOracle as `0x${string}`,
 };
 
 export const CREDITSCORE_ABI = [
@@ -41,6 +43,32 @@ export const CREDITSCORE_ABI = [
     ],
     stateMutability: 'view',
     type: 'function',
+  },
+  {
+    inputs: [{ name: 'wallet', type: 'address' }],
+    name: 'isIdentityVerified',
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'user', type: 'address' },
+      { indexed: false, name: 'newScore', type: 'uint256' },
+      { indexed: false, name: 'newTier', type: 'uint8' },
+    ],
+    name: 'ScoreUpdated',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'identityHash', type: 'bytes32' },
+      { indexed: true, name: 'wallet', type: 'address' },
+    ],
+    name: 'IdentityBound',
+    type: 'event',
   },
 ] as const;
 
@@ -102,6 +130,25 @@ export const LENDINGPOOL_ABI = [
     outputs: [],
     stateMutability: 'nonpayable',
     type: 'function',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'loanId', type: 'uint256' },
+      { indexed: true, name: 'borrower', type: 'address' },
+      { indexed: false, name: 'amount', type: 'uint256' },
+    ],
+    name: 'LoanRequested',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, name: 'loanId', type: 'uint256' },
+      { indexed: true, name: 'borrower', type: 'address' },
+    ],
+    name: 'LoanRepaid',
+    type: 'event',
   },
 ] as const;
 

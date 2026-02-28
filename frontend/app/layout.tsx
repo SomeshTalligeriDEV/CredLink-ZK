@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import Providers from '@/components/Providers';
+import { MocaAuthProvider } from '@/contexts/AuthContext';
 import DashboardLayout from '@/components/ui/DashboardLayout';
 
 export const metadata: Metadata = {
@@ -13,9 +14,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="bg-[#0B0D10] text-white min-h-screen">
         <Providers>
-          <DashboardLayout>
-            {children}
-          </DashboardLayout>
+          <MocaAuthProvider>
+            <DashboardLayout>
+              {children}
+            </DashboardLayout>
+          </MocaAuthProvider>
         </Providers>
       </body>
     </html>
