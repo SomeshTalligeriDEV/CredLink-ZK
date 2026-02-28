@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: credlink-zk-backend
+    runtime: node
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: RPC_URL
+        value: https://data-seed-prebsc-1-s1.binance.org:8545/
+      - key: CREDITSCORE_ADDRESS
+        value: "0x5ED05A35D14cae38Bf7A73AeCF295320DA17dF33"
+      - key: ADMIN_PRIVATE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
