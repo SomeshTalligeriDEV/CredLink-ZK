@@ -1,0 +1,11 @@
+{
+  "CreditScoreZK": "0x5ED05A35D14cae38Bf7A73AeCF295320DA17dF33",
+  "CollateralManager": "0xBbEd9274652F6e82f33D2777970b0719FE2f1F99",
+  "ZKVerifier": "0xc6a420075E19D85F350F0614A5153c4475b8718a",
+  "LendingPool": "0x53c95d8dAFBD171b28B9D874C02534e7b60390E5",
+  "CreditPassportNFT": "0x154F1EAB15a878b674cae2B8BF51eE179c4Dae05",
+  "CrossChainScoreOracle": "0xc91Ef659166CBf9FeBEC263d32F1EDc41eaE1bfA",
+  "GovernanceStub": "0xE5376869F728D464Ae445322D81b2E0ff928a970",
+  "network": "BNB Smart Chain Testnet",
+  "chainId": 97
+}

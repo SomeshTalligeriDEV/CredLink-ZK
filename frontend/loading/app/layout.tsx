@@ -1,23 +1,27 @@
+'use client';
+
 import './globals.css';
-import type { Metadata } from 'next';
 import Providers from '@/components/Providers';
 import { MocaAuthProvider } from '@/contexts/AuthContext';
-import ConditionalLayout from '@/components/ConditionalLayout';
-
-export const metadata: Metadata = {
-  title: 'CredLink ZK',
-  description: 'Privacy-Preserving Behavioral Credit Protocol on BNB Chain',
-};
+import DashboardLayout from '@/components/ui/DashboardLayout';
+import { usePathname } from 'next/navigation';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isLandingOrScene = pathname === '/' || pathname?.startsWith('/scene');
+
   return (
     <html lang="en">
       <body className="bg-[#0B0D10] text-white min-h-screen">
         <Providers>
           <MocaAuthProvider>
-            <ConditionalLayout>
-              {children}
-            </ConditionalLayout>
+            {isLandingOrScene ? (
+              children
+            ) : (
+              <DashboardLayout>
+                {children}
+              </DashboardLayout>
+            )}
           </MocaAuthProvider>
         </Providers>
       </body>

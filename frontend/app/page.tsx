@@ -1,7 +1,8 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useAccount } from 'wagmi';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Shield, Wallet, Activity, TrendingUp, Zap, Lock, ShieldCheck } from 'lucide-react';
 import { analyzeWallet, generateProof, getRiskExplanation, getCollateralRatio, getTierName } from '@/lib/zk-proof';
 import type { WalletAnalysis, ProofResult } from '@/lib/zk-proof';
@@ -15,6 +16,7 @@ import TrustNetworkGraph from '@/components/charts/TrustNetworkGraph';
 import RiskDistributionChart from '@/components/charts/RiskDistributionChart';
 
 export default function Dashboard() {
+  const router = useRouter();
   const { address, isConnected } = useAccount();
   const { mocaVerified, identityHash, loginWithMoca, loading: mocaLoading } = useMocaAuth();
 
@@ -23,6 +25,14 @@ export default function Dashboard() {
   const { totalBorrowed, poolBalance, isLoading: poolLoading } = usePoolMetrics();
   const { activeLoans, loans, isLoading: loansLoading } = useUserLoans();
   const { events: scoreHistory, isLoading: historyLoading } = useScoreHistory();
+
+  // First-visit redirect to intro
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !sessionStorage.getItem('credlink_intro_seen')) {
+      sessionStorage.setItem('credlink_intro_seen', '1');
+      router.replace('/intro');
+    }
+  }, [router]);
 
   // ZK proof state
   const [analysis, setAnalysis] = useState<WalletAnalysis | null>(null);
